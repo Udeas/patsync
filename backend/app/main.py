@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel
 from app.database import engine
 from app.routers.health import router as health_router
+from app.routers.applications import router as applications_router
 
 app = FastAPI()
 
@@ -15,6 +16,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router, prefix="/api")
+app.include_router(applications_router, prefix="/api/applications")
 
 @app.on_event("startup")
 def on_startup():
