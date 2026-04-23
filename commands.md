@@ -5,4 +5,4 @@ activate virtual environment:
 run backend 
 uv run fastapi dev app/main.py
 
-frontend: npm run dev
+frontend: npm start

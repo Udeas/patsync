@@ -1,36 +1,51 @@
-from enum import Enum
-from typing import Optional
 from datetime import date, datetime
-from uuid import UUID, uuid4
+from typing import Optional
 from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, Text, DateTime
 
 
-class ApplicationStatus(str, Enum):
-    APPLICATION_FILED = "Application Filed"
-    SECRECY_DIRECTIONS = "Secrecy Directions"
-    ABANDONED = "Abandoned"
-    FER_ISSUED = "FER Issued"
-    FER_RESPONSE_SUBMITTED = "FER Response Submitted"
-    CASE_UNDER_HEARING = "Case under Hearing"
-    GRANTED = "Granted"
-    ACCEPTED_AND_PUBLISHED = "Accepted and Published"
+class ApplicationData(SQLModel, table=True):
+    __tablename__ = "application_data"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_num: str = Field(nullable=False, unique=True, index=True)
+    applicant_name: str = Field(nullable=False)
+    application_title: str = Field(nullable=False)
+    applicant_address: str = Field(sa_column=Column(Text, nullable=False))
+    comments: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    modified_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
 
-class Application(SQLModel, table=True):
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    application_number: str = Field(unique=True, nullable=False)
-    application_date: date
-    applicant_name: str
-    applicant_address: str = Field(sa_column=Column(Text))
-    application_title: str
-    application_current_status: ApplicationStatus
-    hearing_date: Optional[date] = None
-    grant_no: Optional[str] = None
-    grant_date: Optional[date] = None
-    certificate_status: str
-    renewal_due_date: date
-    examination_response_due_date: date
-    comments: str = Field(sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True)))
-    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True)))
+class Status(SQLModel, table=True):
+    __tablename__ = "status"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    status: str = Field(nullable=False, unique=True)
+
+
+class ApplicationState(SQLModel, table=True):
+    __tablename__ = "application_state"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_num: str = Field(
+        nullable=False,
+        foreign_key="application_data.application_num",
+        index=True,
+    )
+    status_id: int = Field(nullable=False, foreign_key="status.id")
+    application_date: date = Field(nullable=False)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    modified_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )

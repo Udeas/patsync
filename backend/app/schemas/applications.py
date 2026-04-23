@@ -1,43 +1,38 @@
+from datetime import date
 from typing import Optional
-from datetime import date, datetime
-from uuid import UUID
-from sqlmodel import SQLModel
-from ..models.applications import ApplicationStatus
+from sqlmodel import SQLModel, Field
+from pydantic import field_validator
+import re
+
+
+APPLICATION_NUMBER_PATTERN = r"^\d{6}-001$"
 
 
 class ApplicationCreate(SQLModel):
-    application_number: str
+    application_number: str = Field(min_length=10, max_length=10)
     application_date: date
-    applicant_name: str
-    applicant_address: str
-    application_title: str
-    application_current_status: ApplicationStatus
-    hearing_date: Optional[date] = None
-    grant_no: Optional[str] = None
-    grant_date: Optional[date] = None
-    certificate_status: str
-    renewal_due_date: date
-    examination_response_due_date: date
-    comments: str
+    applicant_name: str = Field(min_length=1)
+    applicant_address: str = Field(min_length=1)
+    application_title: str = Field(min_length=1)
+    comments: Optional[str] = None
+
+    @field_validator("application_number")
+    @classmethod
+    def validate_application_number(cls, value: str) -> str:
+        if not re.fullmatch(APPLICATION_NUMBER_PATTERN, value):
+            raise ValueError("application_number must match format xxxxxx-001")
+        return value
 
 
 class ApplicationRead(SQLModel):
-    id: UUID
+    id: int
     application_number: str
     application_date: date
     applicant_name: str
     applicant_address: str
     application_title: str
-    application_current_status: ApplicationStatus
-    hearing_date: Optional[date] = None
-    grant_no: Optional[str] = None
-    grant_date: Optional[date] = None
-    certificate_status: str
-    renewal_due_date: date
-    examination_response_due_date: date
-    comments: str
-    created_at: datetime
-    updated_at: datetime
+    application_current_status: str
+    comments: Optional[str] = None
 
 
 class ApplicationUpdate(SQLModel):
@@ -46,11 +41,22 @@ class ApplicationUpdate(SQLModel):
     applicant_name: Optional[str] = None
     applicant_address: Optional[str] = None
     application_title: Optional[str] = None
-    application_current_status: Optional[ApplicationStatus] = None
-    hearing_date: Optional[date] = None
-    grant_no: Optional[str] = None
-    grant_date: Optional[date] = None
-    certificate_status: Optional[str] = None
-    renewal_due_date: Optional[date] = None
-    examination_response_due_date: Optional[date] = None
     comments: Optional[str] = None
+
+    @field_validator("application_number")
+    @classmethod
+    def validate_optional_application_number(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        if not re.fullmatch(APPLICATION_NUMBER_PATTERN, value):
+            raise ValueError("application_number must match format xxxxxx-001")
+        return value
+
+
+class ApplicationStatusUpdate(SQLModel):
+    status_id: int = Field(gt=0)
+
+
+class StatusRead(SQLModel):
+    id: int
+    status: str
