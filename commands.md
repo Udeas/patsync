@@ -1,6 +1,7 @@
 activate virtual environment:
 
 .venv\Scripts\activate
+patsync\backend\.venv\Scripts\activate
 
 run backend 
 uv run fastapi dev app/main.py

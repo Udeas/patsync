@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, desc
 from ..models.applications import ApplicationData, ApplicationState, Status
@@ -73,9 +74,22 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
 
 
 def get_applications(session: Session) -> List[ApplicationRead]:
+    latest_state_subquery = (
+        select(
+            ApplicationState.application_num.label("application_num"),
+            func.max(ApplicationState.id).label("latest_state_id"),
+        )
+        .group_by(ApplicationState.application_num)
+        .subquery()
+    )
+
     query = (
         select(ApplicationData, ApplicationState, Status)
-        .join(ApplicationState, ApplicationState.application_num == ApplicationData.application_num)
+        .join(
+            latest_state_subquery,
+            latest_state_subquery.c.application_num == ApplicationData.application_num,
+        )
+        .join(ApplicationState, ApplicationState.id == latest_state_subquery.c.latest_state_id)
         .join(Status, Status.id == ApplicationState.status_id)
         .order_by(desc(ApplicationState.application_date), desc(ApplicationState.id))
     )
@@ -103,9 +117,10 @@ def update_application(session: Session, application_id: int, update_data: Appli
     if not db_application:
         return None
 
+    old_number = db_application.application_num
     db_state = session.exec(
         select(ApplicationState)
-        .where(ApplicationState.application_num == db_application.application_num)
+        .where(ApplicationState.application_num == old_number)
         .order_by(desc(ApplicationState.id))
     ).first()
     if not db_state:
@@ -114,7 +129,7 @@ def update_application(session: Session, application_id: int, update_data: Appli
     now = _utcnow()
     update_dict = update_data.model_dump(exclude_unset=True)
 
-    new_number = update_dict.get("application_number", db_application.application_num)
+    new_number = update_dict.get("application_number", old_number)
     if "application_number" in update_dict:
         db_application.application_num = new_number
 
@@ -128,15 +143,24 @@ def update_application(session: Session, application_id: int, update_data: Appli
         db_application.comments = update_dict["comments"]
     db_application.modified_date = now
 
-    if "application_number" in update_dict:
-        db_state.application_num = new_number
+    states_to_update: List[ApplicationState] = [db_state]
+    if "application_number" in update_dict and new_number != old_number:
+        all_states = session.exec(
+            select(ApplicationState).where(ApplicationState.application_num == old_number)
+        ).all()
+        for state in all_states:
+            state.application_num = new_number
+            state.modified_date = now
+        states_to_update = all_states
+
     if "application_date" in update_dict:
         db_state.application_date = update_dict["application_date"]
     db_state.modified_date = now
 
     try:
         session.add(db_application)
-        session.add(db_state)
+        for state in states_to_update:
+            session.add(state)
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -156,16 +180,14 @@ def update_application_status(
     if not status_row:
         raise ValueError("invalid status_id")
 
-    db_state = session.exec(
-        select(ApplicationState)
-        .where(ApplicationState.application_num == db_application.application_num)
-        .order_by(desc(ApplicationState.id))
-    ).first()
-    if not db_state:
-        return None
-
-    db_state.status_id = status_update.status_id
-    db_state.modified_date = _utcnow()
+    now = _utcnow()
+    db_state = ApplicationState(
+        application_num=db_application.application_num,
+        status_id=status_update.status_id,
+        application_date=status_update.application_date,
+        created_date=now,
+        modified_date=now,
+    )
     session.add(db_state)
     session.commit()
     return get_application_by_id(session, application_id)

@@ -55,6 +55,7 @@ class ApplicationUpdate(SQLModel):
 
 class ApplicationStatusUpdate(SQLModel):
     status_id: int = Field(gt=0)
+    application_date: date
 
 
 class StatusRead(SQLModel):
