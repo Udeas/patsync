@@ -181,13 +181,26 @@ def update_application_status(
         raise ValueError("invalid status_id")
 
     now = _utcnow()
-    db_state = ApplicationState(
-        application_num=db_application.application_num,
-        status_id=status_update.status_id,
-        application_date=status_update.application_date,
-        created_date=now,
-        modified_date=now,
-    )
+    db_state = session.exec(
+        select(ApplicationState)
+        .where(
+            ApplicationState.application_num == db_application.application_num,
+            ApplicationState.status_id == status_update.status_id,
+        )
+        .order_by(desc(ApplicationState.id))
+    ).first()
+
+    if db_state:
+        db_state.application_date = status_update.application_date
+        db_state.modified_date = now
+    else:
+        db_state = ApplicationState(
+            application_num=db_application.application_num,
+            status_id=status_update.status_id,
+            application_date=status_update.application_date,
+            created_date=now,
+            modified_date=now,
+        )
     session.add(db_state)
     session.commit()
     return get_application_by_id(session, application_id)
