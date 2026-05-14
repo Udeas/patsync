@@ -7,11 +7,13 @@ from ..schemas.applications import (
     ApplicationRead,
     ApplicationUpdate,
     ApplicationStatusUpdate,
+    ApplicationTimelineRead,
 )
 from ..services.application_service import (
     create_application,
     get_applications,
     get_application_by_id,
+    get_application_timeline,
     update_application,
     update_application_status,
     delete_application,
@@ -43,6 +45,14 @@ def get_application_endpoint(application_id: int, session: Session = Depends(get
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
     return application
+
+
+@router.get("/{application_id}/timeline", response_model=ApplicationTimelineRead)
+def get_application_timeline_endpoint(application_id: int, session: Session = Depends(get_session)):
+    timeline = get_application_timeline(session, application_id)
+    if not timeline:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return timeline
 
 
 @router.put("/{application_id}", response_model=ApplicationRead)

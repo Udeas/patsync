@@ -1,11 +1,19 @@
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 from sqlmodel import SQLModel, Field
 from pydantic import field_validator
 import re
 
 
 APPLICATION_NUMBER_PATTERN = r"^\d{6}-001$"
+
+
+class ReminderRead(SQLModel):
+    """Computed reminder fired on fire_on (phase 1: API/UI only)."""
+
+    kind: str
+    fire_on: date
+    label: str
 
 
 class ApplicationCreate(SQLModel):
@@ -33,6 +41,25 @@ class ApplicationRead(SQLModel):
     application_title: str
     application_current_status: str
     comments: Optional[str] = None
+    filing_date: Optional[date] = None
+    fer_response_deadline: Optional[date] = None
+    upcoming_reminders: List[ReminderRead] = Field(default_factory=list)
+
+
+class ApplicationTimelineEventRead(SQLModel):
+    """application_date semantics: event date entered for this status."""
+
+    state_id: int
+    status: str
+    application_date: date
+
+
+class ApplicationTimelineRead(SQLModel):
+    application_number: str
+    filing_date: Optional[date]
+    fer_response_deadline: Optional[date]
+    upcoming_reminders: List[ReminderRead] = Field(default_factory=list)
+    events: List[ApplicationTimelineEventRead] = Field(default_factory=list)
 
 
 class ApplicationUpdate(SQLModel):

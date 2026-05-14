@@ -1,7 +1,9 @@
-from sqlmodel import create_engine, Session
 from sqlalchemy import text
+from sqlmodel import create_engine, Session
 import os
 from dotenv import load_dotenv
+
+from app.status_catalog import PATENT_STATUS_SEED
 
 load_dotenv()
 
@@ -377,13 +379,30 @@ def _run_sqlite_migrations(conn) -> None:
         conn.execute(text("DELETE FROM application"))
 
 
+def _seed_patent_statuses(conn, backend: str) -> None:
+    conflict_update = (
+        "ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status"
+        if backend == "postgresql"
+        else "ON CONFLICT (id) DO UPDATE SET status = excluded.status"
+    )
+    sql = text(
+        f"""
+        INSERT INTO status (id, status) VALUES (:id, :lbl)
+        {conflict_update}
+        """
+    )
+    for sid, lbl in PATENT_STATUS_SEED:
+        conn.execute(sql, {"id": sid, "lbl": lbl})
+
+
 def run_schema_migrations():
     backend = engine.url.get_backend_name()
     with engine.begin() as conn:
         if backend == "postgresql":
             _run_postgres_migrations(conn)
-            return
-        _run_sqlite_migrations(conn)
+        else:
+            _run_sqlite_migrations(conn)
+        _seed_patent_statuses(conn, backend)
 
 
 def get_session():
