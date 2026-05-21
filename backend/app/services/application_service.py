@@ -10,6 +10,9 @@ from app.domain.patent_timeline import build_timeline_for_application
 from app.models.applications import ApplicationData, ApplicationState, Status
 from app.schemas.applications import (
     ApplicationCreate,
+    ProjectDetailRead,
+    ProjectDetailUpdate,
+    ProjectTimelineItem,
     ApplicationRead,
     ApplicationStatusUpdate,
     ApplicationTimelineEventRead,
@@ -293,12 +296,15 @@ def update_application(session: Session, application_id: int, update_data: Appli
     else:
         db_state.modified_date = now
 
-    to_add: set[ApplicationState] = set(states_to_update)
-    to_add.update(filed_rows)
+    to_add: dict[tuple[int | None, int], ApplicationState] = {}
+    for state in states_to_update:
+        to_add[(state.id, id(state))] = state
+    for state in filed_rows:
+        to_add[(state.id, id(state))] = state
 
     try:
         session.add(db_application)
-        for state in to_add:
+        for state in to_add.values():
             session.add(state)
         session.commit()
     except IntegrityError as exc:
@@ -353,3 +359,87 @@ def delete_application(session: Session, application_id: int) -> bool:
     session.delete(db_application)
     session.commit()
     return True
+
+
+def get_project_detail(session: Session, application_id: int) -> Optional[ProjectDetailRead]:
+    app_read = get_application_by_id(session, application_id)
+    if not app_read:
+        return None
+
+    db_application = session.get(ApplicationData, application_id)
+    if not db_application:
+        return None
+
+    states = session.exec(
+        select(ApplicationState).where(ApplicationState.application_num == db_application.application_num)
+    ).all()
+    by_status_id: dict[int, ApplicationState] = {}
+    for state in states:
+        existing = by_status_id.get(state.status_id)
+        if not existing or (state.id or 0) > (existing.id or 0):
+            by_status_id[state.status_id] = state
+
+    statuses = session.exec(select(Status).order_by(Status.id)).all()
+    timeline = [
+        ProjectTimelineItem(
+            status_id=status.id or 0,
+            status_name=status.status,
+            application_date=by_status_id.get(status.id or 0).application_date if by_status_id.get(status.id or 0) else None,
+        )
+        for status in statuses
+    ]
+
+    return ProjectDetailRead(
+        id=app_read.id,
+        application_number=app_read.application_number,
+        application_date=app_read.application_date,
+        applicant_name=app_read.applicant_name,
+        applicant_address=app_read.applicant_address,
+        application_title=app_read.application_title,
+        application_current_status=app_read.application_current_status,
+        comments=app_read.comments,
+        timeline=timeline,
+    )
+
+
+def update_project_detail(
+    session: Session, application_id: int, detail_update: ProjectDetailUpdate
+) -> Optional[ProjectDetailRead]:
+    updated_app = update_application(session, application_id, detail_update.application)
+    if not updated_app:
+        return None
+
+    db_application = session.get(ApplicationData, application_id)
+    if not db_application:
+        return None
+
+    now = _utcnow()
+    for item in detail_update.timeline_updates:
+        status_row = session.get(Status, item.status_id)
+        if not status_row:
+            raise ValueError(f"invalid status_id: {item.status_id}")
+
+        db_state = session.exec(
+            select(ApplicationState)
+            .where(
+                ApplicationState.application_num == db_application.application_num,
+                ApplicationState.status_id == item.status_id,
+            )
+            .order_by(desc(ApplicationState.id))
+        ).first()
+
+        if db_state:
+            db_state.application_date = item.application_date
+            db_state.modified_date = now
+        else:
+            db_state = ApplicationState(
+                application_num=db_application.application_num,
+                status_id=item.status_id,
+                application_date=item.application_date,
+                created_date=now,
+                modified_date=now,
+            )
+        session.add(db_state)
+
+    session.commit()
+    return get_project_detail(session, application_id)

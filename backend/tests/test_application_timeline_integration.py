@@ -7,7 +7,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.applications import Status
-from app.schemas.applications import ApplicationCreate, ApplicationStatusUpdate
+from app.schemas.applications import ApplicationCreate, ApplicationStatusUpdate, ApplicationUpdate
 from app.services import application_service as svc
 from app.status_catalog import PATENT_STATUS_SEED
 
@@ -73,3 +73,38 @@ def test_get_application_by_id_uses_latest_state(session_fixture: Session):
     assert read is not None
     assert read.application_current_status == "FER Response submitted"
     assert read.application_date == date(2025, 8, 1)
+
+
+def test_update_application_allows_edit_project_data(session_fixture: Session):
+    created = svc.create_application(
+        session_fixture,
+        ApplicationCreate(
+            application_number="300000-001",
+            application_date=date(2025, 2, 1),
+            applicant_name="Original Name",
+            applicant_address="Original Address",
+            application_title="Original Title",
+            comments="Original comment",
+        ),
+    )
+
+    updated = svc.update_application(
+        session_fixture,
+        created.id,
+        ApplicationUpdate(
+            application_number="300001-001",
+            application_date=date(2025, 2, 10),
+            applicant_name="Updated Name",
+            applicant_address="Updated Address",
+            application_title="Updated Title",
+            comments="Updated comment",
+        ),
+    )
+
+    assert updated is not None
+    assert updated.application_number == "300001-001"
+    assert updated.application_date == date(2025, 2, 10)
+    assert updated.applicant_name == "Updated Name"
+    assert updated.applicant_address == "Updated Address"
+    assert updated.application_title == "Updated Title"
+    assert updated.comments == "Updated comment"
