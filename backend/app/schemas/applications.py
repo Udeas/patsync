@@ -88,3 +88,31 @@ class ApplicationStatusUpdate(SQLModel):
 class StatusRead(SQLModel):
     id: int
     status: str
+
+
+class ProjectTimelineItem(SQLModel):
+    status_id: int
+    status_name: str
+    application_date: Optional[date] = None
+
+
+class ProjectDetailRead(SQLModel):
+    id: int
+    application_number: str
+    application_date: date
+    applicant_name: str
+    applicant_address: str
+    application_title: str
+    application_current_status: str
+    comments: Optional[str] = None
+    timeline: list[ProjectTimelineItem]
+
+
+class TimelineStatusUpdate(SQLModel):
+    status_id: int = Field(gt=0)
+    application_date: date
+
+
+class ProjectDetailUpdate(SQLModel):
+    application: ApplicationUpdate
+    timeline_updates: list[TimelineStatusUpdate] = Field(default_factory=list)
