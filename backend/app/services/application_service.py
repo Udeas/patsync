@@ -414,20 +414,30 @@ def update_project_detail(
         return None
 
     now = _utcnow()
+
+    incoming_status_ids = {item.status_id for item in detail_update.timeline_updates}
+    for status_id in incoming_status_ids:
+        if not session.get(Status, status_id):
+            raise ValueError(f"invalid status_id: {status_id}")
+
+    existing_states = session.exec(
+        select(ApplicationState)
+        .where(ApplicationState.application_num == db_application.application_num)
+        .order_by(desc(ApplicationState.id))
+    ).all()
+
+    latest_by_status_id: dict[int, ApplicationState] = {}
+    for state in existing_states:
+        if state.status_id not in incoming_status_ids:
+            session.delete(state)
+            continue
+        if state.status_id in latest_by_status_id:
+            session.delete(state)
+            continue
+        latest_by_status_id[state.status_id] = state
+
     for item in detail_update.timeline_updates:
-        status_row = session.get(Status, item.status_id)
-        if not status_row:
-            raise ValueError(f"invalid status_id: {item.status_id}")
-
-        db_state = session.exec(
-            select(ApplicationState)
-            .where(
-                ApplicationState.application_num == db_application.application_num,
-                ApplicationState.status_id == item.status_id,
-            )
-            .order_by(desc(ApplicationState.id))
-        ).first()
-
+        db_state = latest_by_status_id.get(item.status_id)
         if db_state:
             db_state.application_date = item.application_date
             db_state.modified_date = now
