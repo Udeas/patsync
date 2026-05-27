@@ -6,6 +6,8 @@ from app.database import engine, run_schema_migrations
 from app.routers.health import router as health_router
 from app.routers.applications import router as applications_router
 from app.routers.status import router as status_router
+from app.routers.trademark import router as trademark_router
+from app.routers.tm_status import router as tm_status_router
 
 app = FastAPI()
 
@@ -20,6 +22,8 @@ app.add_middleware(
 app.include_router(health_router, prefix="/api")
 app.include_router(applications_router, prefix="/api/applications")
 app.include_router(status_router, prefix="/api/status")
+app.include_router(trademark_router, prefix="/api/tm-applications")
+app.include_router(tm_status_router, prefix="/api/tm-status")
 
 @app.on_event("startup")
 def on_startup():

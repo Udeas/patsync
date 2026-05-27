@@ -1,17 +1,17 @@
 from datetime import date, datetime
 from typing import List, Optional
-from sqlmodel import SQLModel, Field
+
 from pydantic import field_validator
+from sqlmodel import Field, SQLModel
 import re
 
+from app.tm_class_catalog import validate_tm_class_value
 
-APPLICATION_NUMBER_PATTERN = r"^\d{6}-001$"
+APPLICATION_NUMBER_PATTERN = r"^\d{7}$"
 PROJECT_CODE_PATTERN = r"^[A-Za-z0-9]+$"
 
 
-class ReminderRead(SQLModel):
-    """Computed reminder fired on fire_on (phase 1: API/UI only)."""
-
+class TmReminderRead(SQLModel):
     kind: str
     fire_on: date
     label: str
@@ -23,20 +23,21 @@ def _validate_project_code(value: str) -> str:
     return value
 
 
-class ApplicationCreate(SQLModel):
+class TmApplicationCreate(SQLModel):
     project_code: str = Field(min_length=1, max_length=64)
-    application_number: str = Field(min_length=10, max_length=10)
+    application_number: str = Field(min_length=7, max_length=7)
     application_date: date
     applicant_name: str = Field(min_length=1)
+    tm_name: str = Field(min_length=1)
+    tm_class: str = Field(min_length=1)
     applicant_address: str = Field(min_length=1)
-    application_title: str = Field(min_length=1)
     comments: Optional[str] = None
 
     @field_validator("application_number")
     @classmethod
     def validate_application_number(cls, value: str) -> str:
         if not re.fullmatch(APPLICATION_NUMBER_PATTERN, value):
-            raise ValueError("application_number must match format xxxxxx-001")
+            raise ValueError("application_number must be exactly 7 digits")
         return value
 
     @field_validator("project_code")
@@ -44,47 +45,64 @@ class ApplicationCreate(SQLModel):
     def validate_create_project_code(cls, value: str) -> str:
         return _validate_project_code(value)
 
+    @field_validator("tm_class")
+    @classmethod
+    def validate_tm_class(cls, value: str) -> str:
+        return validate_tm_class_value(value)
 
-class ApplicationRead(SQLModel):
+    @field_validator("comments")
+    @classmethod
+    def validate_comments_for_multi_class(cls, value: Optional[str], info) -> Optional[str]:
+        tm_class = (info.data.get("tm_class") or "").strip()
+        comment = (value or "").strip()
+        if tm_class == "99" and not comment:
+            raise ValueError("For class 99, add all classes in comments.")
+        return value
+
+
+class TmApplicationRead(SQLModel):
     id: int
     project_code: str
     application_number: str
     application_date: date
     status_date: date
     applicant_name: str
+    tm_name: str
+    tm_class: str
+    tm_class_description: Optional[str] = None
     applicant_address: str
-    application_title: str
     application_current_status: str
     comments: Optional[str] = None
     filing_date: Optional[date] = None
-    fer_response_deadline: Optional[date] = None
-    upcoming_reminders: List[ReminderRead] = Field(default_factory=list)
+    fer_followup_due: Optional[date] = None
+    hearing_due: Optional[date] = None
+    upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
     last_status_updated_at: Optional[datetime] = None
 
 
-class ApplicationTimelineEventRead(SQLModel):
-    """application_date semantics: event date entered for this status."""
-
+class TmApplicationTimelineEventRead(SQLModel):
     state_id: int
     status: str
     application_date: date
 
 
-class ApplicationTimelineRead(SQLModel):
+class TmApplicationTimelineRead(SQLModel):
     application_number: str
     filing_date: Optional[date]
-    fer_response_deadline: Optional[date]
-    upcoming_reminders: List[ReminderRead] = Field(default_factory=list)
-    events: List[ApplicationTimelineEventRead] = Field(default_factory=list)
+    fer_followup_due: Optional[date]
+    hearing_due: Optional[date]
+    upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
+    events: List[TmApplicationTimelineEventRead] = Field(default_factory=list)
 
 
-class ApplicationUpdate(SQLModel):
+class TmApplicationUpdate(SQLModel):
     project_code: Optional[str] = None
     application_number: Optional[str] = None
     application_date: Optional[date] = None
     applicant_name: Optional[str] = None
+    tm_name: Optional[str] = None
+    tm_class: Optional[str] = None
     applicant_address: Optional[str] = None
-    application_title: Optional[str] = None
     comments: Optional[str] = None
 
     @field_validator("application_number")
@@ -93,7 +111,7 @@ class ApplicationUpdate(SQLModel):
         if value is None:
             return value
         if not re.fullmatch(APPLICATION_NUMBER_PATTERN, value):
-            raise ValueError("application_number must match format xxxxxx-001")
+            raise ValueError("application_number must be exactly 7 digits")
         return value
 
     @field_validator("project_code")
@@ -103,18 +121,25 @@ class ApplicationUpdate(SQLModel):
             return value
         return _validate_project_code(value)
 
+    @field_validator("tm_class")
+    @classmethod
+    def validate_optional_tm_class(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        return validate_tm_class_value(value)
 
-class ApplicationStatusUpdate(SQLModel):
+
+class TmApplicationStatusUpdate(SQLModel):
     status_id: int = Field(gt=0)
     application_date: date
 
 
-class StatusRead(SQLModel):
+class TmStatusRead(SQLModel):
     id: int
     status: str
 
 
-class ProjectTimelineItem(SQLModel):
+class TmProjectTimelineItem(SQLModel):
     status_id: int
     status_name: str
     application_date: Optional[date] = None
@@ -122,24 +147,26 @@ class ProjectTimelineItem(SQLModel):
     is_enabled: bool = True
 
 
-class ProjectDetailRead(SQLModel):
+class TmProjectDetailRead(SQLModel):
     id: int
     project_code: str
     application_number: str
     application_date: date
     applicant_name: str
+    tm_name: str
+    tm_class: str
+    tm_class_description: Optional[str] = None
     applicant_address: str
-    application_title: str
     application_current_status: str
     comments: Optional[str] = None
-    timeline: list[ProjectTimelineItem]
+    timeline: list[TmProjectTimelineItem]
 
 
-class TimelineStatusUpdate(SQLModel):
+class TmTimelineStatusUpdate(SQLModel):
     status_id: int = Field(gt=0)
     application_date: date
 
 
-class ProjectDetailUpdate(SQLModel):
-    application: ApplicationUpdate
-    timeline_updates: list[TimelineStatusUpdate] = Field(default_factory=list)
+class TmProjectDetailUpdate(SQLModel):
+    application: TmApplicationUpdate
+    timeline_updates: list[TmTimelineStatusUpdate] = Field(default_factory=list)

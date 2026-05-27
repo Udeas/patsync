@@ -1,17 +1,19 @@
 from datetime import date, datetime
 from typing import Optional
-from sqlmodel import SQLModel, Field
-from sqlalchemy import Column, Text, DateTime
+
+from sqlalchemy import Column, DateTime, Text
+from sqlmodel import Field, SQLModel
 
 
-class ApplicationData(SQLModel, table=True):
-    __tablename__ = "application_data"
+class TmApplicationData(SQLModel, table=True):
+    __tablename__ = "tm_application_data"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     project_code: str = Field(nullable=False, unique=True, index=True)
     application_num: str = Field(nullable=False, unique=True, index=True)
     applicant_name: str = Field(nullable=False)
-    application_title: str = Field(nullable=False)
+    tm_name: str = Field(nullable=False)
+    tm_class: str = Field(nullable=False)
     applicant_address: str = Field(sa_column=Column(Text, nullable=False))
     comments: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_date: datetime = Field(
@@ -28,23 +30,23 @@ class ApplicationData(SQLModel, table=True):
     )
 
 
-class Status(SQLModel, table=True):
-    __tablename__ = "status"
+class TmStatus(SQLModel, table=True):
+    __tablename__ = "tm_status"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     status: str = Field(nullable=False, unique=True)
 
 
-class ApplicationState(SQLModel, table=True):
-    __tablename__ = "application_state"
+class TmApplicationState(SQLModel, table=True):
+    __tablename__ = "tm_application_state"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     application_num: str = Field(
         nullable=False,
-        foreign_key="application_data.application_num",
+        foreign_key="tm_application_data.application_num",
         index=True,
     )
-    status_id: int = Field(nullable=False, foreign_key="status.id")
+    status_id: int = Field(nullable=False, foreign_key="tm_status.id")
     application_date: date = Field(nullable=False)
     created_date: datetime = Field(
         default_factory=datetime.utcnow,

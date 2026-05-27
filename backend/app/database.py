@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 
 from app.status_catalog import PATENT_STATUS_SEED
+from app.tm_status_catalog import TM_STATUS_SEED
 
 load_dotenv()
 
@@ -164,6 +165,50 @@ def _run_postgres_migrations(conn) -> None:
     conn.execute(
         text(
             """
+            ALTER TABLE application_data
+            ADD COLUMN IF NOT EXISTS project_code VARCHAR;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            UPDATE application_data
+            SET project_code = 'PROJ' || id::text
+            WHERE project_code IS NULL;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'uq_application_data_project_code'
+                ) THEN
+                    ALTER TABLE application_data
+                    ADD CONSTRAINT uq_application_data_project_code UNIQUE (project_code);
+                END IF;
+            END $$;
+            """
+        )
+    )
+    conn.execute(text("ALTER TABLE application_data ALTER COLUMN project_code SET NOT NULL"))
+
+    conn.execute(
+        text(
+            """
+            ALTER TABLE application_data
+            ADD COLUMN IF NOT EXISTS last_status_updated_at TIMESTAMPTZ;
+            """
+        )
+    )
+
+    conn.execute(
+        text(
+            """
             ALTER TABLE application_state
             ADD COLUMN IF NOT EXISTS created_date TIMESTAMPTZ;
             """
@@ -244,6 +289,63 @@ def _run_postgres_migrations(conn) -> None:
     if legacy_table_exists:
         conn.execute(text('TRUNCATE TABLE "application" RESTART IDENTITY CASCADE'))
 
+    _run_postgres_tm_migrations(conn)
+
+
+def _run_postgres_tm_migrations(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_application_data (
+                id SERIAL PRIMARY KEY,
+                project_code VARCHAR NOT NULL UNIQUE,
+                application_num VARCHAR NOT NULL UNIQUE,
+                applicant_name VARCHAR NOT NULL,
+                tm_name VARCHAR NOT NULL,
+                tm_class VARCHAR NOT NULL,
+                applicant_address TEXT NOT NULL,
+                comments TEXT,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                modified_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_status_updated_at TIMESTAMPTZ
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_status (
+                id INTEGER PRIMARY KEY,
+                status VARCHAR NOT NULL UNIQUE
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_application_state (
+                id SERIAL PRIMARY KEY,
+                application_num VARCHAR NOT NULL REFERENCES tm_application_data(application_num)
+                    ON UPDATE CASCADE ON DELETE CASCADE,
+                status_id INTEGER NOT NULL REFERENCES tm_status(id),
+                application_date DATE NOT NULL,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                modified_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_tm_application_state_application_num
+            ON tm_application_state (application_num);
+            """
+        )
+    )
+
 
 def _sqlite_column_exists(conn, table_name: str, column_name: str) -> bool:
     rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
@@ -291,13 +393,15 @@ def _run_sqlite_migrations(conn) -> None:
             """
             CREATE TABLE IF NOT EXISTS application_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_code TEXT NOT NULL UNIQUE,
                 application_num TEXT NOT NULL UNIQUE,
                 applicant_name TEXT NOT NULL,
                 application_title TEXT NOT NULL,
                 applicant_address TEXT NOT NULL,
                 comments TEXT,
                 created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                modified_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                modified_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_status_updated_at TEXT
             );
             """
         )
@@ -329,6 +433,19 @@ def _run_sqlite_migrations(conn) -> None:
         )
     )
 
+    if not _sqlite_column_exists(conn, "application_data", "project_code"):
+        conn.execute(text("ALTER TABLE application_data ADD COLUMN project_code TEXT"))
+        conn.execute(
+            text(
+                """
+                UPDATE application_data
+                SET project_code = 'PROJ' || id
+                WHERE project_code IS NULL
+                """
+            )
+        )
+    if not _sqlite_column_exists(conn, "application_data", "last_status_updated_at"):
+        conn.execute(text("ALTER TABLE application_data ADD COLUMN last_status_updated_at TEXT"))
     if not _sqlite_column_exists(conn, "application_data", "created_date"):
         conn.execute(
             text("ALTER TABLE application_data ADD COLUMN created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
@@ -378,6 +495,57 @@ def _run_sqlite_migrations(conn) -> None:
     if legacy_sqlite_exists:
         conn.execute(text("DELETE FROM application"))
 
+    _run_sqlite_tm_migrations(conn)
+
+
+def _run_sqlite_tm_migrations(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_application_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_code TEXT NOT NULL UNIQUE,
+                application_num TEXT NOT NULL UNIQUE,
+                applicant_name TEXT NOT NULL,
+                tm_name TEXT NOT NULL,
+                tm_class TEXT NOT NULL,
+                applicant_address TEXT NOT NULL,
+                comments TEXT,
+                created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                modified_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_status_updated_at TEXT
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_status (
+                id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL UNIQUE
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_application_state (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_num TEXT NOT NULL,
+                status_id INTEGER NOT NULL,
+                application_date DATE NOT NULL,
+                created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                modified_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(application_num) REFERENCES tm_application_data(application_num)
+                    ON UPDATE CASCADE ON DELETE CASCADE,
+                FOREIGN KEY(status_id) REFERENCES tm_status(id)
+            );
+            """
+        )
+    )
+
 
 def _seed_patent_statuses(conn, backend: str) -> None:
     conflict_update = (
@@ -395,6 +563,22 @@ def _seed_patent_statuses(conn, backend: str) -> None:
         conn.execute(sql, {"id": sid, "lbl": lbl})
 
 
+def _seed_tm_statuses(conn, backend: str) -> None:
+    conflict_update = (
+        "ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status"
+        if backend == "postgresql"
+        else "ON CONFLICT (id) DO UPDATE SET status = excluded.status"
+    )
+    sql = text(
+        f"""
+        INSERT INTO tm_status (id, status) VALUES (:id, :lbl)
+        {conflict_update}
+        """
+    )
+    for sid, lbl in TM_STATUS_SEED:
+        conn.execute(sql, {"id": sid, "lbl": lbl})
+
+
 def run_schema_migrations():
     backend = engine.url.get_backend_name()
     with engine.begin() as conn:
@@ -403,6 +587,7 @@ def run_schema_migrations():
         else:
             _run_sqlite_migrations(conn)
         _seed_patent_statuses(conn, backend)
+        _seed_tm_statuses(conn, backend)
 
 
 def get_session():

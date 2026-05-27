@@ -6,35 +6,36 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, desc, select
 
-from app.domain.patent_timeline import build_timeline_for_application
-from app.domain.status_workflow import (
+from app.domain.tm_status_workflow import (
     enabled_status_ids,
     is_optional_status,
     validate_status_change,
     validate_timeline_updates,
 )
-from app.models.applications import ApplicationData, ApplicationState, Status
-from app.schemas.applications import (
-    ApplicationCreate,
-    ProjectDetailRead,
-    ProjectDetailUpdate,
-    ProjectTimelineItem,
-    ApplicationRead,
-    ApplicationStatusUpdate,
-    ApplicationTimelineEventRead,
-    ApplicationTimelineRead,
-    ApplicationUpdate,
-    ReminderRead,
-    StatusRead,
+from app.domain.tm_timeline import build_timeline_for_tm_application
+from app.tm_class_catalog import class_description_for
+from app.models.trademark import TmApplicationData, TmApplicationState, TmStatus
+from app.schemas.trademark import (
+    TmApplicationCreate,
+    TmApplicationRead,
+    TmApplicationStatusUpdate,
+    TmApplicationTimelineEventRead,
+    TmApplicationTimelineRead,
+    TmApplicationUpdate,
+    TmProjectDetailRead,
+    TmProjectDetailUpdate,
+    TmProjectTimelineItem,
+    TmReminderRead,
+    TmStatusRead,
 )
-from app.status_catalog import STATUS_ID_APPLICATION_FILED
+from app.tm_status_catalog import STATUS_ID_TM_APPLICATION_FILED
 
 
 def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
-def _touch_last_status_updated(db_application: ApplicationData, when: Optional[datetime] = None) -> None:
+def _touch_last_status_updated(db_application: TmApplicationData, when: Optional[datetime] = None) -> None:
     ts = when or _utcnow()
     db_application.last_status_updated_at = ts
     db_application.modified_date = ts
@@ -42,10 +43,10 @@ def _touch_last_status_updated(db_application: ApplicationData, when: Optional[d
 
 def _states_ordered_for_app(session: Session, application_num: str) -> List[Tuple[int, date, str]]:
     rows = session.exec(
-        select(ApplicationState, Status)
-        .join(Status)
-        .where(ApplicationState.application_num == application_num)
-        .order_by(ApplicationState.id)
+        select(TmApplicationState, TmStatus)
+        .join(TmStatus)
+        .where(TmApplicationState.application_num == application_num)
+        .order_by(TmApplicationState.id)
     ).all()
     return [(state.id or 0, state.application_date, st.status) for state, st in rows]
 
@@ -58,10 +59,10 @@ def _states_grouped(
     if not nums:
         return {}
     rows = session.exec(
-        select(ApplicationState, Status)
-        .join(Status)
-        .where(ApplicationState.application_num.in_(nums))
-        .order_by(ApplicationState.application_num, ApplicationState.id)
+        select(TmApplicationState, TmStatus)
+        .join(TmStatus)
+        .where(TmApplicationState.application_num.in_(nums))
+        .order_by(TmApplicationState.application_num, TmApplicationState.id)
     ).all()
     grouped: DefaultDict[str, List[Tuple[int, date, str]]] = defaultdict(list)
     for state, st in rows:
@@ -70,34 +71,37 @@ def _states_grouped(
 
 
 def _read_model_with_timeline(
-    data: ApplicationData,
-    state: ApplicationState,
-    status: Status,
+    data: TmApplicationData,
+    state: TmApplicationState,
+    status: TmStatus,
     states_ordered: List[Tuple[int, date, str]],
     today: date,
-) -> ApplicationRead:
-    tl = build_timeline_for_application(
+) -> TmApplicationRead:
+    tl = build_timeline_for_tm_application(
         states_ordered=states_ordered,
         current_status_name=status.status,
         today=today,
     )
     reminders = [
-        ReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
+        TmReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
     ]
     filing_date = tl.filing_date or state.application_date
-    return ApplicationRead(
+    return TmApplicationRead(
         id=data.id or 0,
         project_code=data.project_code,
         application_number=data.application_num,
         application_date=filing_date,
         status_date=state.application_date,
         applicant_name=data.applicant_name,
+        tm_name=data.tm_name,
+        tm_class=data.tm_class,
+        tm_class_description=class_description_for(data.tm_class),
         applicant_address=data.applicant_address,
-        application_title=data.application_title,
         application_current_status=status.status,
         comments=data.comments,
         filing_date=tl.filing_date,
-        fer_response_deadline=tl.fer_response_deadline,
+        fer_followup_due=tl.fer_followup_due,
+        hearing_due=tl.hearing_due,
         upcoming_reminders=reminders,
         last_status_updated_at=data.last_status_updated_at,
     )
@@ -105,9 +109,9 @@ def _read_model_with_timeline(
 
 def _filled_status_dates(session: Session, application_num: str) -> dict[int, date]:
     states = session.exec(
-        select(ApplicationState).where(ApplicationState.application_num == application_num)
+        select(TmApplicationState).where(TmApplicationState.application_num == application_num)
     ).all()
-    by_status_id: dict[int, ApplicationState] = {}
+    by_status_id: dict[int, TmApplicationState] = {}
     for state in states:
         existing = by_status_id.get(state.status_id)
         if not existing or (state.id or 0) > (existing.id or 0):
@@ -115,23 +119,24 @@ def _filled_status_dates(session: Session, application_num: str) -> dict[int, da
     return {sid: st.application_date for sid, st in by_status_id.items()}
 
 
-def list_statuses(session: Session) -> List[StatusRead]:
-    rows = session.exec(select(Status).order_by(Status.id)).all()
-    return [StatusRead(id=row.id or 0, status=row.status) for row in rows]
+def list_tm_statuses(session: Session) -> List[TmStatusRead]:
+    rows = session.exec(select(TmStatus).order_by(TmStatus.id)).all()
+    return [TmStatusRead(id=row.id or 0, status=row.status) for row in rows]
 
 
-def create_application(session: Session, application: ApplicationCreate) -> ApplicationRead:
-    status_row = session.get(Status, STATUS_ID_APPLICATION_FILED)
+def create_tm_application(session: Session, application: TmApplicationCreate) -> TmApplicationRead:
+    status_row = session.get(TmStatus, STATUS_ID_TM_APPLICATION_FILED)
     if not status_row:
-        raise ValueError("status table must contain Application Filed before creating applications")
+        raise ValueError("tm_status table must contain Application filed before creating applications")
 
     now = _utcnow()
-    db_application = ApplicationData(
+    db_application = TmApplicationData(
         project_code=application.project_code,
         application_num=application.application_number,
         applicant_name=application.applicant_name,
+        tm_name=application.tm_name,
+        tm_class=application.tm_class,
         applicant_address=application.applicant_address,
-        application_title=application.application_title,
         comments=application.comments,
         created_date=now,
         modified_date=now,
@@ -141,9 +146,9 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
         session.add(db_application)
         session.flush()
 
-        db_state = ApplicationState(
+        db_state = TmApplicationState(
             application_num=application.application_number,
-            status_id=STATUS_ID_APPLICATION_FILED,
+            status_id=STATUS_ID_TM_APPLICATION_FILED,
             application_date=application.application_date,
             created_date=now,
             modified_date=now,
@@ -165,25 +170,25 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
     return _read_model_with_timeline(db_application, db_state, status_row, states, today)
 
 
-def get_applications(session: Session) -> List[ApplicationRead]:
+def get_tm_applications(session: Session) -> List[TmApplicationRead]:
     latest_state_subquery = (
         select(
-            ApplicationState.application_num.label("application_num"),
-            func.max(ApplicationState.id).label("latest_state_id"),
+            TmApplicationState.application_num.label("application_num"),
+            func.max(TmApplicationState.id).label("latest_state_id"),
         )
-        .group_by(ApplicationState.application_num)
+        .group_by(TmApplicationState.application_num)
         .subquery()
     )
 
     query = (
-        select(ApplicationData, ApplicationState, Status)
+        select(TmApplicationData, TmApplicationState, TmStatus)
         .join(
             latest_state_subquery,
-            latest_state_subquery.c.application_num == ApplicationData.application_num,
+            latest_state_subquery.c.application_num == TmApplicationData.application_num,
         )
-        .join(ApplicationState, ApplicationState.id == latest_state_subquery.c.latest_state_id)
-        .join(Status, Status.id == ApplicationState.status_id)
-        .order_by(desc(ApplicationState.application_date), desc(ApplicationState.id))
+        .join(TmApplicationState, TmApplicationState.id == latest_state_subquery.c.latest_state_id)
+        .join(TmStatus, TmStatus.id == TmApplicationState.status_id)
+        .order_by(desc(TmApplicationState.application_date), desc(TmApplicationState.id))
     )
     rows = session.exec(query).all()
     today = date.today()
@@ -195,25 +200,25 @@ def get_applications(session: Session) -> List[ApplicationRead]:
     ]
 
 
-def get_application_by_id(session: Session, application_id: int) -> Optional[ApplicationRead]:
+def get_tm_application_by_id(session: Session, application_id: int) -> Optional[TmApplicationRead]:
     latest_state_subquery = (
         select(
-            ApplicationState.application_num.label("application_num"),
-            func.max(ApplicationState.id).label("latest_state_id"),
+            TmApplicationState.application_num.label("application_num"),
+            func.max(TmApplicationState.id).label("latest_state_id"),
         )
-        .group_by(ApplicationState.application_num)
+        .group_by(TmApplicationState.application_num)
         .subquery()
     )
 
     query = (
-        select(ApplicationData, ApplicationState, Status)
+        select(TmApplicationData, TmApplicationState, TmStatus)
         .join(
             latest_state_subquery,
-            latest_state_subquery.c.application_num == ApplicationData.application_num,
+            latest_state_subquery.c.application_num == TmApplicationData.application_num,
         )
-        .join(ApplicationState, ApplicationState.id == latest_state_subquery.c.latest_state_id)
-        .join(Status, Status.id == ApplicationState.status_id)
-        .where(ApplicationData.id == application_id)
+        .join(TmApplicationState, TmApplicationState.id == latest_state_subquery.c.latest_state_id)
+        .join(TmStatus, TmStatus.id == TmApplicationState.status_id)
+        .where(TmApplicationData.id == application_id)
     )
     row = session.exec(query).first()
     if not row:
@@ -224,32 +229,32 @@ def get_application_by_id(session: Session, application_id: int) -> Optional[App
     return _read_model_with_timeline(data, state, status, states, today)
 
 
-def get_application_timeline(session: Session, application_id: int) -> Optional[ApplicationTimelineRead]:
-    db_application = session.get(ApplicationData, application_id)
+def get_tm_application_timeline(session: Session, application_id: int) -> Optional[TmApplicationTimelineRead]:
+    db_application = session.get(TmApplicationData, application_id)
     if not db_application:
         return None
     states = _states_ordered_for_app(session, db_application.application_num)
     current_status = states[-1][2] if states else ""
 
     today = date.today()
-    tl = build_timeline_for_application(
+    tl = build_timeline_for_tm_application(
         states_ordered=states,
         current_status_name=current_status,
         today=today,
     )
 
     reminders = [
-        ReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
+        TmReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
     ]
 
     raw_states = session.exec(
-        select(ApplicationState, Status)
-        .join(Status)
-        .where(ApplicationState.application_num == db_application.application_num)
-        .order_by(ApplicationState.id)
+        select(TmApplicationState, TmStatus)
+        .join(TmStatus)
+        .where(TmApplicationState.application_num == db_application.application_num)
+        .order_by(TmApplicationState.id)
     ).all()
     events = [
-        ApplicationTimelineEventRead(
+        TmApplicationTimelineEventRead(
             state_id=st.id or 0,
             status=meta.status,
             application_date=st.application_date,
@@ -257,31 +262,46 @@ def get_application_timeline(session: Session, application_id: int) -> Optional[
         for st, meta in raw_states
     ]
 
-    return ApplicationTimelineRead(
+    return TmApplicationTimelineRead(
         application_number=db_application.application_num,
         filing_date=tl.filing_date,
-        fer_response_deadline=tl.fer_response_deadline,
+        fer_followup_due=tl.fer_followup_due,
+        hearing_due=tl.hearing_due,
         upcoming_reminders=reminders,
         events=events,
     )
 
 
-def update_application(session: Session, application_id: int, update_data: ApplicationUpdate) -> Optional[ApplicationRead]:
-    db_application = session.get(ApplicationData, application_id)
+def update_tm_application(
+    session: Session, application_id: int, update_data: TmApplicationUpdate
+) -> Optional[TmApplicationRead]:
+    db_application = session.get(TmApplicationData, application_id)
     if not db_application:
         return None
 
     old_number = db_application.application_num
+    update_dict = update_data.model_dump(exclude_unset=True)
+    now = _utcnow()
+
     db_state = session.exec(
-        select(ApplicationState)
-        .where(ApplicationState.application_num == old_number)
-        .order_by(desc(ApplicationState.id))
+        select(TmApplicationState)
+        .where(TmApplicationState.application_num == old_number)
+        .order_by(desc(TmApplicationState.id))
     ).first()
     if not db_state:
-        return None
-
-    now = _utcnow()
-    update_dict = update_data.model_dump(exclude_unset=True)
+        status_row = session.get(TmStatus, STATUS_ID_TM_APPLICATION_FILED)
+        if not status_row:
+            return None
+        filing_date = update_dict.get("application_date", date.today())
+        db_state = TmApplicationState(
+            application_num=db_application.application_num,
+            status_id=STATUS_ID_TM_APPLICATION_FILED,
+            application_date=filing_date,
+            created_date=now,
+            modified_date=now,
+        )
+        session.add(db_state)
+        session.flush()
 
     new_number = update_dict.get("application_number", old_number)
     if "application_number" in update_dict:
@@ -289,38 +309,43 @@ def update_application(session: Session, application_id: int, update_data: Appli
 
     if "project_code" in update_dict:
         db_application.project_code = update_dict["project_code"]
-
     if "applicant_name" in update_dict:
         db_application.applicant_name = update_dict["applicant_name"]
+    if "tm_name" in update_dict:
+        db_application.tm_name = update_dict["tm_name"]
+    if "tm_class" in update_dict:
+        db_application.tm_class = update_dict["tm_class"]
     if "applicant_address" in update_dict:
         db_application.applicant_address = update_dict["applicant_address"]
-    if "application_title" in update_dict:
-        db_application.application_title = update_dict["application_title"]
     if "comments" in update_dict:
         db_application.comments = update_dict["comments"]
+    effective_class = str(update_dict.get("tm_class", db_application.tm_class)).strip()
+    effective_comments = str(update_dict.get("comments", db_application.comments or "")).strip()
+    if effective_class == "99" and not effective_comments:
+        raise ValueError("For class 99, add all classes in comments.")
     db_application.modified_date = now
 
-    states_to_update: List[ApplicationState] = [db_state]
+    states_to_update: List[TmApplicationState] = [db_state]
     if "application_number" in update_dict and new_number != old_number:
         all_states = session.exec(
-            select(ApplicationState).where(ApplicationState.application_num == old_number)
+            select(TmApplicationState).where(TmApplicationState.application_num == old_number)
         ).all()
         for state in all_states:
             state.application_num = new_number
             state.modified_date = now
         states_to_update = all_states
 
-    filed_rows: List[ApplicationState] = []
+    filed_rows: List[TmApplicationState] = []
 
     if "application_date" in update_dict:
         new_date_val = update_dict["application_date"]
         filed_rows = session.exec(
-            select(ApplicationState)
+            select(TmApplicationState)
             .where(
-                ApplicationState.application_num == db_application.application_num,
-                ApplicationState.status_id == STATUS_ID_APPLICATION_FILED,
+                TmApplicationState.application_num == db_application.application_num,
+                TmApplicationState.status_id == STATUS_ID_TM_APPLICATION_FILED,
             )
-            .order_by(ApplicationState.id)
+            .order_by(TmApplicationState.id)
         ).all()
         if filed_rows:
             for fr in filed_rows:
@@ -332,7 +357,7 @@ def update_application(session: Session, application_id: int, update_data: Appli
     else:
         db_state.modified_date = now
 
-    to_add: dict[tuple[int | None, int], ApplicationState] = {}
+    to_add: dict[tuple[int | None, int], TmApplicationState] = {}
     for state in states_to_update:
         to_add[(state.id, id(state))] = state
     for state in filed_rows:
@@ -350,17 +375,17 @@ def update_application(session: Session, application_id: int, update_data: Appli
             raise ValueError("project_code already exists") from exc
         raise ValueError("application_number already exists or violates constraints") from exc
 
-    return get_application_by_id(session, application_id)
+    return get_tm_application_by_id(session, application_id)
 
 
-def update_application_status(
-    session: Session, application_id: int, status_update: ApplicationStatusUpdate
-) -> Optional[ApplicationRead]:
-    db_application = session.get(ApplicationData, application_id)
+def update_tm_application_status(
+    session: Session, application_id: int, status_update: TmApplicationStatusUpdate
+) -> Optional[TmApplicationRead]:
+    db_application = session.get(TmApplicationData, application_id)
     if not db_application:
         return None
 
-    status_row = session.get(Status, status_update.status_id)
+    status_row = session.get(TmStatus, status_update.status_id)
     if not status_row:
         raise ValueError("invalid status_id")
 
@@ -373,19 +398,19 @@ def update_application_status(
 
     now = _utcnow()
     db_state = session.exec(
-        select(ApplicationState)
+        select(TmApplicationState)
         .where(
-            ApplicationState.application_num == db_application.application_num,
-            ApplicationState.status_id == status_update.status_id,
+            TmApplicationState.application_num == db_application.application_num,
+            TmApplicationState.status_id == status_update.status_id,
         )
-        .order_by(desc(ApplicationState.id))
+        .order_by(desc(TmApplicationState.id))
     ).first()
 
     if db_state:
         db_state.application_date = status_update.application_date
         db_state.modified_date = now
     else:
-        db_state = ApplicationState(
+        db_state = TmApplicationState(
             application_num=db_application.application_num,
             status_id=status_update.status_id,
             application_date=status_update.application_date,
@@ -395,45 +420,43 @@ def update_application_status(
     session.add(db_state)
     _touch_last_status_updated(db_application, now)
     session.commit()
-    return get_application_by_id(session, application_id)
+    return get_tm_application_by_id(session, application_id)
 
 
-def delete_application(session: Session, application_id: int) -> bool:
-    db_application = session.get(ApplicationData, application_id)
+def delete_tm_application(session: Session, application_id: int) -> bool:
+    db_application = session.get(TmApplicationData, application_id)
     if not db_application:
         return False
-
     session.delete(db_application)
     session.commit()
     return True
 
 
-def get_project_detail(session: Session, application_id: int) -> Optional[ProjectDetailRead]:
-    app_read = get_application_by_id(session, application_id)
+def get_tm_project_detail(session: Session, application_id: int) -> Optional[TmProjectDetailRead]:
+    app_read = get_tm_application_by_id(session, application_id)
     if not app_read:
         return None
 
-    db_application = session.get(ApplicationData, application_id)
+    db_application = session.get(TmApplicationData, application_id)
     if not db_application:
         return None
 
     states = session.exec(
-        select(ApplicationState).where(ApplicationState.application_num == db_application.application_num)
+        select(TmApplicationState).where(
+            TmApplicationState.application_num == db_application.application_num
+        )
     ).all()
-    by_status_id: dict[int, ApplicationState] = {}
+    by_status_id: dict[int, TmApplicationState] = {}
     for state in states:
         existing = by_status_id.get(state.status_id)
         if not existing or (state.id or 0) > (existing.id or 0):
             by_status_id[state.status_id] = state
 
-    filled = {
-        sid: st.application_date
-        for sid, st in by_status_id.items()
-    }
+    filled = {sid: st.application_date for sid, st in by_status_id.items()}
     enabled = enabled_status_ids(filled)
-    statuses = session.exec(select(Status).order_by(Status.id)).all()
+    statuses = session.exec(select(TmStatus).order_by(TmStatus.id)).all()
     timeline = [
-        ProjectTimelineItem(
+        TmProjectTimelineItem(
             status_id=status.id or 0,
             status_name=status.status,
             application_date=by_status_id.get(status.id or 0).application_date
@@ -445,28 +468,30 @@ def get_project_detail(session: Session, application_id: int) -> Optional[Projec
         for status in statuses
     ]
 
-    return ProjectDetailRead(
+    return TmProjectDetailRead(
         id=app_read.id,
         project_code=app_read.project_code,
         application_number=app_read.application_number,
         application_date=app_read.application_date,
         applicant_name=app_read.applicant_name,
+        tm_name=app_read.tm_name,
+        tm_class=app_read.tm_class,
+        tm_class_description=class_description_for(app_read.tm_class),
         applicant_address=app_read.applicant_address,
-        application_title=app_read.application_title,
         application_current_status=app_read.application_current_status,
         comments=app_read.comments,
         timeline=timeline,
     )
 
 
-def update_project_detail(
-    session: Session, application_id: int, detail_update: ProjectDetailUpdate
-) -> Optional[ProjectDetailRead]:
-    updated_app = update_application(session, application_id, detail_update.application)
+def update_tm_project_detail(
+    session: Session, application_id: int, detail_update: TmProjectDetailUpdate
+) -> Optional[TmProjectDetailRead]:
+    updated_app = update_tm_application(session, application_id, detail_update.application)
     if not updated_app:
         return None
 
-    db_application = session.get(ApplicationData, application_id)
+    db_application = session.get(TmApplicationData, application_id)
     if not db_application:
         return None
 
@@ -474,7 +499,7 @@ def update_project_detail(
 
     incoming_status_ids = {item.status_id for item in detail_update.timeline_updates}
     for status_id in incoming_status_ids:
-        if not session.get(Status, status_id):
+        if not session.get(TmStatus, status_id):
             raise ValueError(f"invalid status_id: {status_id}")
 
     validate_timeline_updates(
@@ -482,16 +507,13 @@ def update_project_detail(
     )
 
     existing_states = session.exec(
-        select(ApplicationState)
-        .where(ApplicationState.application_num == db_application.application_num)
-        .order_by(desc(ApplicationState.id))
+        select(TmApplicationState)
+        .where(TmApplicationState.application_num == db_application.application_num)
+        .order_by(desc(TmApplicationState.id))
     ).all()
 
-    latest_by_status_id: dict[int, ApplicationState] = {}
+    latest_by_status_id: dict[int, TmApplicationState] = {}
     for state in existing_states:
-        if state.status_id not in incoming_status_ids:
-            session.delete(state)
-            continue
         if state.status_id in latest_by_status_id:
             session.delete(state)
             continue
@@ -503,7 +525,7 @@ def update_project_detail(
             db_state.application_date = item.application_date
             db_state.modified_date = now
         else:
-            db_state = ApplicationState(
+            db_state = TmApplicationState(
                 application_num=db_application.application_num,
                 status_id=item.status_id,
                 application_date=item.application_date,
@@ -516,4 +538,4 @@ def update_project_detail(
         _touch_last_status_updated(db_application, now)
 
     session.commit()
-    return get_project_detail(session, application_id)
+    return get_tm_project_detail(session, application_id)
