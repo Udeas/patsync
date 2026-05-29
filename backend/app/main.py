@@ -8,6 +8,7 @@ from app.routers.applications import router as applications_router
 from app.routers.status import router as status_router
 from app.routers.trademark import router as trademark_router
 from app.routers.tm_status import router as tm_status_router
+from app.patents.router import router as patents_router
 
 app = FastAPI()
 
@@ -24,6 +25,7 @@ app.include_router(applications_router, prefix="/api/applications")
 app.include_router(status_router, prefix="/api/status")
 app.include_router(trademark_router, prefix="/api/tm-applications")
 app.include_router(tm_status_router, prefix="/api/tm-status")
+app.include_router(patents_router, prefix="/api/patents")
 
 @app.on_event("startup")
 def on_startup():
