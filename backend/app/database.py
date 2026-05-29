@@ -579,6 +579,76 @@ def _seed_tm_statuses(conn, backend: str) -> None:
         conn.execute(sql, {"id": sid, "lbl": lbl})
 
 
+def _postgres_column_exists(conn, table_name: str, column_name: str) -> bool:
+    return bool(
+        conn.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = :table_name
+                      AND column_name = :column_name
+                )
+                """
+            ),
+            {"table_name": table_name, "column_name": column_name},
+        ).scalar_one()
+    )
+
+
+def _run_patent_metadata_migrations(conn, backend: str) -> None:
+    if backend == "postgresql":
+        if not _postgres_column_exists(conn, "patent_project", "application_type"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN application_type VARCHAR"))
+        if not _postgres_column_exists(conn, "patent_project", "provisional_kind"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN provisional_kind VARCHAR(3)"))
+        if not _postgres_column_exists(conn, "patent_project", "pct_wipo_filed_only"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_international_application (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    international_application_no VARCHAR NOT NULL,
+                    international_application_date DATE NOT NULL
+                );
+                """
+            )
+        )
+        return
+
+    if _sqlite_column_exists(conn, "patent_project", "id"):
+        if not _sqlite_column_exists(conn, "patent_project", "application_type"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN application_type TEXT"))
+        if not _sqlite_column_exists(conn, "patent_project", "provisional_kind"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN provisional_kind TEXT"))
+        if not _sqlite_column_exists(conn, "patent_project", "pct_wipo_filed_only"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_international_application (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                international_application_no TEXT NOT NULL,
+                international_application_date DATE NOT NULL
+            );
+            """
+        )
+    )
+
+
 def run_schema_migrations():
     backend = engine.url.get_backend_name()
     with engine.begin() as conn:
@@ -586,6 +656,7 @@ def run_schema_migrations():
             _run_postgres_migrations(conn)
         else:
             _run_sqlite_migrations(conn)
+        _run_patent_metadata_migrations(conn, backend)
         _seed_patent_statuses(conn, backend)
         _seed_tm_statuses(conn, backend)
 
