@@ -622,6 +622,19 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_applicant (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    name VARCHAR NOT NULL,
+                    country VARCHAR(2),
+                    address TEXT
+                );
+                """
+            )
+        )
         return
 
     if _sqlite_column_exists(conn, "patent_project", "id"):
@@ -643,6 +656,19 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 project_id INTEGER NOT NULL REFERENCES patent_project(id),
                 international_application_no TEXT NOT NULL,
                 international_application_date DATE NOT NULL
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_applicant (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                name TEXT NOT NULL,
+                country TEXT,
+                address TEXT
             );
             """
         )

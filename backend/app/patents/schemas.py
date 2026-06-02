@@ -15,6 +15,12 @@ class PatentInventorInput(SQLModel):
     address: Optional[str] = None
 
 
+class PatentApplicantInput(SQLModel):
+    name: str
+    country: Optional[str] = Field(default=None, max_length=2)
+    address: Optional[str] = None
+
+
 class PatentPriorityInput(SQLModel):
     priority_application_no: str
     priority_application_date: date
@@ -35,6 +41,12 @@ class PatentInternationalInput(SQLModel):
 class PatentInventorRead(SQLModel):
     name: str
     nationality: Optional[str] = None
+    address: Optional[str] = None
+
+
+class PatentApplicantRead(SQLModel):
+    name: str
+    country: Optional[str] = None
     address: Optional[str] = None
 
 
@@ -81,6 +93,7 @@ class PatentProjectCreate(SQLModel):
     applicant_name: str
     applicant_country: Optional[str] = Field(default=None, max_length=2)
     applicant_address: Optional[str] = None
+    applicants: list[PatentApplicantInput] = Field(default_factory=list)
     application_title: Optional[str] = None
     attorney_id: Optional[int] = None
     client_id: Optional[int] = None
@@ -119,6 +132,7 @@ class PatentProjectRead(SQLModel):
     applicant_name: str
     applicant_country: Optional[str] = None
     applicant_address: Optional[str] = None
+    applicants: list[PatentApplicantRead] = Field(default_factory=list)
     application_title: Optional[str] = None
     application_type: Optional[str] = None
     provisional_kind: Optional[str] = None
@@ -154,6 +168,8 @@ class PatentStatusUpdate(SQLModel):
 
 class PatentProjectUpdate(SQLModel):
     docket_no: str
+    project_mode: Optional[Literal["draft", "final"]] = None
+    application_type: Optional[str] = None
     client_docket_no: Optional[str] = None
     application_title: Optional[str] = None
     in_application_no: Optional[str] = None
@@ -161,7 +177,14 @@ class PatentProjectUpdate(SQLModel):
     applicant_name: str
     applicant_country: Optional[str] = Field(default=None, max_length=2)
     applicant_address: Optional[str] = None
+    applicants: Optional[list[PatentApplicantInput]] = None
     attorney_id: Optional[int] = None
+    client_id: Optional[int] = None
+    provisional_kind: Optional[Literal["OP", "ONP"]] = None
+    pct_wipo_filed_only: Optional[bool] = None
+    inventors: Optional[list[PatentInventorInput]] = None
+    priorities: Optional[list[PatentPriorityInput]] = None
+    international_applications: Optional[list[PatentInternationalInput]] = None
 
     @field_validator("in_application_no")
     @classmethod
@@ -196,6 +219,16 @@ class PatentAgentRead(PatentAgentInput):
     id: int
 
 
+class PatentAgentUpdate(SQLModel):
+    name: str
+    agent_code: str
+    address: Optional[str] = None
+    mobile_1: str
+    mobile_2: Optional[str] = None
+    email_1: str
+    email_2: Optional[str] = None
+
+
 class PatentClientInput(SQLModel):
     client_code: str = Field(min_length=4, max_length=4)
     name: str
@@ -208,6 +241,15 @@ class PatentClientInput(SQLModel):
 class PatentClientRead(SQLModel):
     id: int
     client_code: str
+    name: str
+    address: Optional[str] = None
+    email: Optional[str] = None
+    key_contacts: list[str] = Field(default_factory=list)
+    docketing_email: Optional[str] = None
+
+
+class PatentClientUpdate(SQLModel):
+    client_code: str = Field(min_length=4, max_length=4)
     name: str
     address: Optional[str] = None
     email: Optional[str] = None

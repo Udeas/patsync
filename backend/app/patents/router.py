@@ -8,8 +8,10 @@ from app.database import get_session
 from .schemas import (
     PatentAgentInput,
     PatentAgentRead,
+    PatentAgentUpdate,
     PatentClientInput,
     PatentClientRead,
+    PatentClientUpdate,
     PatentDraftFinalizeRequest,
     PatentProjectCreate,
     PatentProjectDetailUpdate,
@@ -22,12 +24,16 @@ from .service import (
     create_patent_agent,
     create_patent_client,
     create_project,
+    delete_patent_agent,
+    delete_patent_client,
     get_project,
     list_patent_agents,
     list_patent_clients,
     list_projects,
     update_project,
     update_project_detail,
+    update_patent_agent,
+    update_patent_client,
     update_status_event,
 )
 
@@ -128,6 +134,32 @@ def create_client_endpoint(payload: PatentClientInput, session: Session = Depend
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.put("/clients/{client_id}", response_model=PatentClientRead)
+def update_client_endpoint(
+    client_id: int,
+    payload: PatentClientUpdate,
+    session: Session = Depends(get_session),
+):
+    try:
+        updated = update_patent_client(session, client_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="Patent client not found")
+    return updated
+
+
+@router.delete("/clients/{client_id}")
+def delete_client_endpoint(client_id: int, session: Session = Depends(get_session)):
+    try:
+        deleted = delete_patent_client(session, client_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Patent client not found")
+    return {"ok": True}
+
+
 @router.get("/agents", response_model=list[PatentAgentRead])
 def list_agents_endpoint(session: Session = Depends(get_session)):
     return list_patent_agents(session)
@@ -139,3 +171,29 @@ def create_agent_endpoint(payload: PatentAgentInput, session: Session = Depends(
         return create_patent_agent(session, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/agents/{agent_id}", response_model=PatentAgentRead)
+def update_agent_endpoint(
+    agent_id: int,
+    payload: PatentAgentUpdate,
+    session: Session = Depends(get_session),
+):
+    try:
+        updated = update_patent_agent(session, agent_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="Patent agent not found")
+    return updated
+
+
+@router.delete("/agents/{agent_id}")
+def delete_agent_endpoint(agent_id: int, session: Session = Depends(get_session)):
+    try:
+        deleted = delete_patent_agent(session, agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Patent agent not found")
+    return {"ok": True}

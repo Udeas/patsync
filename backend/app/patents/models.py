@@ -46,6 +46,16 @@ class PatentInventor(SQLModel, table=True):
     address: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
 
+class PatentApplicant(SQLModel, table=True):
+    __tablename__ = "patent_applicant"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    name: str = Field(nullable=False)
+    country: Optional[str] = Field(default=None, max_length=2)
+    address: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
+
 class PatentInternationalApplication(SQLModel, table=True):
     __tablename__ = "patent_international_application"
 
