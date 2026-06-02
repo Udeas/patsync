@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.database import get_session
@@ -20,6 +20,7 @@ from .schemas import (
     PatentStatusUpdate,
 )
 from .service import (
+    archive_project,
     convert_draft_to_final,
     create_patent_agent,
     create_patent_client,
@@ -49,8 +50,11 @@ def create_project_endpoint(payload: PatentProjectCreate, session: Session = Dep
 
 
 @router.get("/projects", response_model=list[PatentProjectRead])
-def list_projects_endpoint(session: Session = Depends(get_session)):
-    return list_projects(session)
+def list_projects_endpoint(
+    include_archived: bool = Query(default=False),
+    session: Session = Depends(get_session),
+):
+    return list_projects(session, include_archived=include_archived)
 
 
 @router.get("/projects/{project_id}", response_model=PatentProjectRead)
@@ -116,6 +120,14 @@ def update_status_endpoint(
         project = update_status_event(session, project_id, payload.status_id, payload.status_date)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not project:
+        raise HTTPException(status_code=404, detail="Patent project not found")
+    return project
+
+
+@router.delete("/projects/{project_id}", response_model=PatentProjectRead)
+def archive_project_endpoint(project_id: int, session: Session = Depends(get_session)):
+    project = archive_project(session, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Patent project not found")
     return project

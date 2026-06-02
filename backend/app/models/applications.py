@@ -12,6 +12,8 @@ class ApplicationData(SQLModel, table=True):
     application_num: str = Field(nullable=False, unique=True, index=True)
     applicant_name: str = Field(nullable=False)
     application_title: str = Field(nullable=False)
+    client_id: Optional[int] = Field(default=None, foreign_key="patent_client.id")
+    attorney_id: Optional[int] = Field(default=None, foreign_key="patent_agent.id")
     applicant_address: str = Field(sa_column=Column(Text, nullable=False))
     comments: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_date: datetime = Field(

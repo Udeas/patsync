@@ -148,6 +148,7 @@ class PatentProjectRead(SQLModel):
     attorney: Optional[PatentAgentSummary] = None
     client: Optional[PatentClientSummary] = None
     client_docket_no: Optional[str] = None
+    is_archived: bool = False
 
 
 class PatentDraftFinalizeRequest(SQLModel):
@@ -230,7 +231,7 @@ class PatentAgentUpdate(SQLModel):
 
 
 class PatentClientInput(SQLModel):
-    client_code: str = Field(min_length=4, max_length=4)
+    client_code: str = Field(min_length=1, max_length=10)
     name: str
     address: Optional[str] = None
     email: Optional[str] = None
@@ -249,7 +250,7 @@ class PatentClientRead(SQLModel):
 
 
 class PatentClientUpdate(SQLModel):
-    client_code: str = Field(min_length=4, max_length=4)
+    client_code: str = Field(min_length=1, max_length=10)
     name: str
     address: Optional[str] = None
     email: Optional[str] = None

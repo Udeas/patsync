@@ -10,7 +10,7 @@ from app.patents.schemas import (
     PatentProjectCreate,
     PatentProjectUpdate,
 )
-from app.patents.service import create_project, get_project, update_project
+from app.patents.service import archive_project, create_project, get_project, list_projects, update_project
 
 
 def _make_session() -> Session:
@@ -154,3 +154,31 @@ def test_update_project_supports_append_edit_delete_and_replace_for_collections(
         fetched = get_project(session, project_id)
         assert fetched is not None
         assert fetched["applicants"] == []
+
+
+def test_archive_project_hidden_by_default_and_visible_with_include_archived() -> None:
+    with _make_session() as session:
+        created = create_project(
+            session,
+            PatentProjectCreate(
+                project_mode="draft",
+                application_type="Provisional Application",
+                docket_no="DCKT-ARCH-001",
+                applicant_name="Applicant",
+                applicant_country="IN",
+                applicant_address="Address",
+                applicants=[],
+                inventors=[],
+                priorities=[],
+                international_applications=[],
+            ),
+        )
+        archived = archive_project(session, created["id"])
+        assert archived is not None
+        assert archived["is_archived"] is True
+
+        visible_default = list_projects(session)
+        assert all(row["id"] != created["id"] for row in visible_default)
+
+        visible_with_archived = list_projects(session, include_archived=True)
+        assert any(row["id"] == created["id"] for row in visible_with_archived)

@@ -26,6 +26,7 @@ class PatentProject(SQLModel, table=True):
     application_type: Optional[str] = Field(default=None)
     provisional_kind: Optional[str] = Field(default=None, max_length=3)
     pct_wipo_filed_only: bool = Field(default=False)
+    is_archived: bool = Field(default=False, nullable=False, index=True)
     created_date: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -89,7 +90,7 @@ class PatentClient(SQLModel, table=True):
     __tablename__ = "patent_client"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    client_code: str = Field(nullable=False, unique=True, max_length=4, index=True)
+    client_code: str = Field(nullable=False, unique=True, max_length=10, index=True)
     name: str = Field(nullable=False, index=True)
     address: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     email: Optional[str] = Field(default=None)
