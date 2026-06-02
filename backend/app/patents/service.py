@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from .models import (
+    PatentApplicant,
     PatentAgent,
     PatentClient,
     PatentInternationalApplication,
@@ -19,7 +21,9 @@ from .reminders import compute_next_patent_action
 from .patent_status_catalog import ALL_STATUS_IDS
 from .schemas import (
     PatentAgentInput,
+    PatentAgentUpdate,
     PatentClientInput,
+    PatentClientUpdate,
     PatentDraftFinalizeRequest,
     PatentProjectCreate,
     PatentProjectDetailUpdate,
@@ -55,6 +59,11 @@ def _seed_application_filed_if_final(
 
 
 def _load_project_relations(session: Session, project: PatentProject) -> dict:
+    applicants = session.exec(
+        select(PatentApplicant)
+        .where(PatentApplicant.project_id == project.id)
+        .order_by(PatentApplicant.id.asc())
+    ).all()
     inventors = session.exec(
         select(PatentInventor)
         .where(PatentInventor.project_id == project.id)
@@ -105,6 +114,14 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
             }
 
     return {
+        "applicants": [
+            {
+                "name": applicant.name,
+                "country": applicant.country,
+                "address": applicant.address,
+            }
+            for applicant in applicants
+        ],
         "inventors": [
             {
                 "name": inv.name,
@@ -230,15 +247,28 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
 
     validate_create_project_filing_windows(payload)
 
+    source_applicants = payload.applicants
+    if not source_applicants:
+        from .schemas import PatentApplicantInput
+
+        source_applicants = [
+            PatentApplicantInput(
+                name=payload.applicant_name,
+                country=payload.applicant_country,
+                address=payload.applicant_address,
+            )
+        ]
+    primary_applicant = source_applicants[0]
+
     project = PatentProject(
         docket_no=payload.docket_no,
         project_mode=payload.project_mode,
         project_stage="final" if payload.project_mode == "final" else "draft",
         in_application_no=payload.in_application_no,
         in_application_date=payload.in_application_date,
-        applicant_name=payload.applicant_name,
-        applicant_country=payload.applicant_country,
-        applicant_address=payload.applicant_address,
+        applicant_name=(primary_applicant.name or "").strip(),
+        applicant_country=((primary_applicant.country or "").strip() or None),
+        applicant_address=((primary_applicant.address or "").strip() or None),
         application_title=payload.application_title,
         application_type=payload.application_type,
         provisional_kind=payload.provisional_kind,
@@ -249,6 +279,21 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
     )
     session.add(project)
     session.flush()
+
+    for applicant in source_applicants:
+        name = str(applicant.name or "").strip()
+        country = str(applicant.country or "").strip() or None
+        address = str(applicant.address or "").strip() or None
+        if not name and not country and not address:
+            continue
+        session.add(
+            PatentApplicant(
+                project_id=project.id,
+                name=name,
+                country=country,
+                address=address,
+            )
+        )
 
     for inventor in payload.inventors:
         session.add(
@@ -319,18 +364,144 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
             if duplicate and duplicate.id != project_id:
                 raise ValueError("IN application number already exists")
 
+    if payload.project_mode == "final" and not payload.in_application_no:
+        raise ValueError("IN application number is required for final projects")
+    if payload.project_mode == "final" and not payload.in_application_date:
+        raise ValueError("IN application date is required for final projects")
+    validate_create_project_filing_windows(
+        PatentProjectCreate(
+            project_mode=payload.project_mode or project.project_mode,
+            application_type=payload.application_type or project.application_type or "",
+            docket_no=payload.docket_no,
+            in_application_no=payload.in_application_no,
+            in_application_date=payload.in_application_date,
+            applicant_name=payload.applicant_name,
+            applicant_country=payload.applicant_country,
+            applicant_address=payload.applicant_address,
+            applicants=payload.applicants or [],
+            application_title=payload.application_title,
+            attorney_id=payload.attorney_id,
+            client_id=payload.client_id,
+            client_docket_no=payload.client_docket_no,
+            provisional_kind=payload.provisional_kind,
+            pct_wipo_filed_only=payload.pct_wipo_filed_only if payload.pct_wipo_filed_only is not None else project.pct_wipo_filed_only,
+            inventors=payload.inventors or [],
+            priorities=payload.priorities or [],
+            international_applications=payload.international_applications or [],
+        )
+    )
+
     project.docket_no = payload.docket_no
+    if payload.project_mode:
+        project.project_mode = payload.project_mode
+        project.project_stage = "final" if payload.project_mode == "final" else "draft"
+    if payload.application_type is not None:
+        project.application_type = payload.application_type
     project.client_docket_no = payload.client_docket_no
     project.application_title = payload.application_title
     project.in_application_no = payload.in_application_no
     project.in_application_date = payload.in_application_date
-    project.applicant_name = payload.applicant_name
-    project.applicant_country = payload.applicant_country
-    project.applicant_address = payload.applicant_address
     project.attorney_id = payload.attorney_id
+    if payload.client_id is not None:
+        project.client_id = payload.client_id
+    if payload.provisional_kind is not None:
+        project.provisional_kind = payload.provisional_kind
+    if payload.pct_wipo_filed_only is not None:
+        project.pct_wipo_filed_only = payload.pct_wipo_filed_only
+
+    if payload.applicants is not None:
+        existing_applicants = session.exec(
+            select(PatentApplicant).where(PatentApplicant.project_id == project_id)
+        ).all()
+        for applicant in existing_applicants:
+            session.delete(applicant)
+        for applicant in payload.applicants:
+            name = str(applicant.name or "").strip()
+            country = str(applicant.country or "").strip() or None
+            address = str(applicant.address or "").strip() or None
+            if not name and not country and not address:
+                continue
+            session.add(
+                PatentApplicant(
+                    project_id=project_id,
+                    name=name,
+                    country=country,
+                    address=address,
+                )
+            )
+        primary = next(
+            (
+                applicant
+                for applicant in payload.applicants
+                if str(applicant.name or "").strip()
+                or str(applicant.country or "").strip()
+                or str(applicant.address or "").strip()
+            ),
+            None,
+        )
+        if primary:
+            project.applicant_name = str(primary.name or "").strip()
+            project.applicant_country = str(primary.country or "").strip() or None
+            project.applicant_address = str(primary.address or "").strip() or None
+        else:
+            project.applicant_name = ""
+            project.applicant_country = None
+            project.applicant_address = None
+    else:
+        project.applicant_name = payload.applicant_name
+        project.applicant_country = payload.applicant_country
+        project.applicant_address = payload.applicant_address
     project.modified_date = datetime.utcnow()
     session.add(project)
     session.flush()
+
+    if payload.inventors is not None:
+        existing_inventors = session.exec(
+            select(PatentInventor).where(PatentInventor.project_id == project_id)
+        ).all()
+        for inventor in existing_inventors:
+            session.delete(inventor)
+        for inventor in payload.inventors:
+            session.add(
+                PatentInventor(
+                    project_id=project_id,
+                    name=inventor.name,
+                    nationality=inventor.nationality,
+                    address=inventor.address,
+                )
+            )
+
+    if payload.priorities is not None:
+        existing_priorities = session.exec(
+            select(PatentPriority).where(PatentPriority.project_id == project_id)
+        ).all()
+        for priority in existing_priorities:
+            session.delete(priority)
+        for priority in payload.priorities:
+            session.add(
+                PatentPriority(
+                    project_id=project_id,
+                    priority_application_no=priority.priority_application_no,
+                    priority_application_date=priority.priority_application_date,
+                    country=priority.country.upper(),
+                    title=priority.title,
+                )
+            )
+
+    if payload.international_applications is not None:
+        existing_international = session.exec(
+            select(PatentInternationalApplication).where(PatentInternationalApplication.project_id == project_id)
+        ).all()
+        for row in existing_international:
+            session.delete(row)
+        for row in payload.international_applications:
+            session.add(
+                PatentInternationalApplication(
+                    project_id=project_id,
+                    international_application_no=row.international_application_no,
+                    international_application_date=row.international_application_date,
+                )
+            )
 
     if payload.in_application_date:
         filed_event = session.exec(
@@ -501,3 +672,83 @@ def create_patent_agent(session: Session, payload: PatentAgentInput) -> PatentAg
     session.commit()
     session.refresh(agent)
     return agent
+
+
+def update_patent_client(session: Session, client_id: int, payload: PatentClientUpdate) -> dict | None:
+    client = session.get(PatentClient, client_id)
+    if not client:
+        return None
+
+    normalized_code = payload.client_code.upper()
+    existing = session.exec(
+        select(PatentClient).where(PatentClient.client_code == normalized_code)
+    ).first()
+    if existing and existing.id != client_id:
+        raise ValueError("Client code already exists")
+
+    client.client_code = normalized_code
+    client.name = payload.name
+    client.address = payload.address
+    client.email = payload.email
+    client.key_contacts = json.dumps(payload.key_contacts)
+    client.docketing_email = payload.docketing_email
+    session.add(client)
+    session.commit()
+    session.refresh(client)
+    return {
+        "id": client.id,
+        "client_code": client.client_code,
+        "name": client.name,
+        "address": client.address,
+        "email": client.email,
+        "key_contacts": payload.key_contacts,
+        "docketing_email": client.docketing_email,
+    }
+
+
+def delete_patent_client(session: Session, client_id: int) -> bool:
+    client = session.get(PatentClient, client_id)
+    if not client:
+        return False
+    try:
+        session.delete(client)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ValueError("Cannot delete client because it is used in existing patent projects") from exc
+    return True
+
+
+def update_patent_agent(session: Session, agent_id: int, payload: PatentAgentUpdate) -> PatentAgent | None:
+    agent = session.get(PatentAgent, agent_id)
+    if not agent:
+        return None
+
+    existing = session.exec(select(PatentAgent).where(PatentAgent.agent_code == payload.agent_code)).first()
+    if existing and existing.id != agent_id:
+        raise ValueError("Patent agent code already exists")
+
+    agent.name = payload.name
+    agent.agent_code = payload.agent_code
+    agent.address = payload.address
+    agent.mobile_1 = payload.mobile_1
+    agent.mobile_2 = payload.mobile_2
+    agent.email_1 = payload.email_1
+    agent.email_2 = payload.email_2
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+    return agent
+
+
+def delete_patent_agent(session: Session, agent_id: int) -> bool:
+    agent = session.get(PatentAgent, agent_id)
+    if not agent:
+        return False
+    try:
+        session.delete(agent)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ValueError("Cannot delete attorney because it is used in existing patent projects") from exc
+    return True
