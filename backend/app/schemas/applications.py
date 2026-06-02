@@ -4,6 +4,7 @@ from sqlmodel import SQLModel, Field
 from pydantic import field_validator
 import re
 
+from app.patents.schemas import PatentAgentSummary, PatentClientSummary
 
 APPLICATION_NUMBER_PATTERN = r"^\d{6}-001$"
 PROJECT_CODE_PATTERN = r"^[A-Za-z0-9]+$"
@@ -30,6 +31,8 @@ class ApplicationCreate(SQLModel):
     applicant_name: str = Field(min_length=1)
     applicant_address: str = Field(min_length=1)
     application_title: str = Field(min_length=1)
+    client_id: Optional[int] = None
+    attorney_id: Optional[int] = None
     comments: Optional[str] = None
 
     @field_validator("application_number")
@@ -54,6 +57,10 @@ class ApplicationRead(SQLModel):
     applicant_name: str
     applicant_address: str
     application_title: str
+    client_id: Optional[int] = None
+    attorney_id: Optional[int] = None
+    client: Optional[PatentClientSummary] = None
+    attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
     comments: Optional[str] = None
     filing_date: Optional[date] = None
@@ -85,6 +92,8 @@ class ApplicationUpdate(SQLModel):
     applicant_name: Optional[str] = None
     applicant_address: Optional[str] = None
     application_title: Optional[str] = None
+    client_id: Optional[int] = None
+    attorney_id: Optional[int] = None
     comments: Optional[str] = None
 
     @field_validator("application_number")
@@ -130,6 +139,10 @@ class ProjectDetailRead(SQLModel):
     applicant_name: str
     applicant_address: str
     application_title: str
+    client_id: Optional[int] = None
+    attorney_id: Optional[int] = None
+    client: Optional[PatentClientSummary] = None
+    attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
     comments: Optional[str] = None
     timeline: list[ProjectTimelineItem]

@@ -205,6 +205,22 @@ def _run_postgres_migrations(conn) -> None:
             """
         )
     )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE application_data
+            ADD COLUMN IF NOT EXISTS client_id INTEGER;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE application_data
+            ADD COLUMN IF NOT EXISTS attorney_id INTEGER;
+            """
+        )
+    )
 
     conn.execute(
         text(
@@ -345,6 +361,22 @@ def _run_postgres_tm_migrations(conn) -> None:
             """
         )
     )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS client_id INTEGER;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS attorney_id INTEGER;
+            """
+        )
+    )
 
 
 def _sqlite_column_exists(conn, table_name: str, column_name: str) -> bool:
@@ -446,6 +478,10 @@ def _run_sqlite_migrations(conn) -> None:
         )
     if not _sqlite_column_exists(conn, "application_data", "last_status_updated_at"):
         conn.execute(text("ALTER TABLE application_data ADD COLUMN last_status_updated_at TEXT"))
+    if not _sqlite_column_exists(conn, "application_data", "client_id"):
+        conn.execute(text("ALTER TABLE application_data ADD COLUMN client_id INTEGER"))
+    if not _sqlite_column_exists(conn, "application_data", "attorney_id"):
+        conn.execute(text("ALTER TABLE application_data ADD COLUMN attorney_id INTEGER"))
     if not _sqlite_column_exists(conn, "application_data", "created_date"):
         conn.execute(
             text("ALTER TABLE application_data ADD COLUMN created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
@@ -545,6 +581,10 @@ def _run_sqlite_tm_migrations(conn) -> None:
             """
         )
     )
+    if not _sqlite_column_exists(conn, "tm_application_data", "client_id"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN client_id INTEGER"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "attorney_id"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN attorney_id INTEGER"))
 
 
 def _seed_patent_statuses(conn, backend: str) -> None:
@@ -610,6 +650,28 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                     "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT FALSE"
                 )
             )
+        if not _postgres_column_exists(conn, "patent_project", "is_archived"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = 'patent_client'
+                    ) THEN
+                        ALTER TABLE patent_client ALTER COLUMN client_code TYPE VARCHAR(10);
+                    END IF;
+                END $$;
+                """
+            )
+        )
         conn.execute(
             text(
                 """
@@ -646,6 +708,12 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             conn.execute(
                 text(
                     "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+        if not _sqlite_column_exists(conn, "patent_project", "is_archived"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0"
                 )
             )
     conn.execute(

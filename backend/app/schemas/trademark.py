@@ -6,6 +6,7 @@ from sqlmodel import Field, SQLModel
 import re
 
 from app.tm_class_catalog import validate_tm_class_value
+from app.patents.schemas import PatentAgentSummary, PatentClientSummary
 
 APPLICATION_NUMBER_PATTERN = r"^\d{7}$"
 PROJECT_CODE_PATTERN = r"^[A-Za-z0-9]+$"
@@ -30,6 +31,8 @@ class TmApplicationCreate(SQLModel):
     applicant_name: str = Field(min_length=1)
     tm_name: str = Field(min_length=1)
     tm_class: str = Field(min_length=1)
+    client_id: Optional[int] = None
+    attorney_id: Optional[int] = None
     applicant_address: str = Field(min_length=1)
     comments: Optional[str] = None
 
@@ -71,6 +74,10 @@ class TmApplicationRead(SQLModel):
     tm_class: str
     tm_class_description: Optional[str] = None
     applicant_address: str
+    client_id: Optional[int] = None
+    attorney_id: Optional[int] = None
+    client: Optional[PatentClientSummary] = None
+    attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
     comments: Optional[str] = None
     filing_date: Optional[date] = None
@@ -102,6 +109,8 @@ class TmApplicationUpdate(SQLModel):
     applicant_name: Optional[str] = None
     tm_name: Optional[str] = None
     tm_class: Optional[str] = None
+    client_id: Optional[int] = None
+    attorney_id: Optional[int] = None
     applicant_address: Optional[str] = None
     comments: Optional[str] = None
 
@@ -157,6 +166,10 @@ class TmProjectDetailRead(SQLModel):
     tm_class: str
     tm_class_description: Optional[str] = None
     applicant_address: str
+    client_id: Optional[int] = None
+    attorney_id: Optional[int] = None
+    client: Optional[PatentClientSummary] = None
+    attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
     comments: Optional[str] = None
     timeline: list[TmProjectTimelineItem]

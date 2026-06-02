@@ -169,6 +169,7 @@ def _project_to_response(session: Session, project: PatentProject) -> dict:
         current_status_id=current_status[0] if current_status else None,
         in_application_date=project.in_application_date,
         priority_dates=priority_dates,
+        provisional_kind=project.provisional_kind,
     )
     due_action = next_action.message if next_action else None
     action_due_date = next_action.due_date if next_action else None
@@ -186,6 +187,7 @@ def _project_to_response(session: Session, project: PatentProject) -> dict:
         "application_type": project.application_type,
         "provisional_kind": project.provisional_kind,
         "pct_wipo_filed_only": project.pct_wipo_filed_only,
+        "is_archived": project.is_archived,
         "client_docket_no": project.client_docket_no,
         "current_status_id": current_status[0] if current_status else None,
         "current_status_date": current_status[1] if current_status else None,
@@ -193,6 +195,44 @@ def _project_to_response(session: Session, project: PatentProject) -> dict:
         "action_due_date": action_due_date,
         **relations,
     }
+
+
+def _validate_in_number_date_year_match(in_application_no: str | None, in_application_date) -> None:
+    if not in_application_no or not in_application_date:
+        return
+    parsed = parse_in_application_number(in_application_no)
+    if parsed.filing_year != in_application_date.year:
+        raise ValueError(
+            "IN application number year does not match IN application date year. "
+            "Please check either application number or date."
+        )
+
+
+def _is_complete_applicant(applicant) -> bool:
+    name = str(getattr(applicant, "name", "") or "").strip()
+    country = str(getattr(applicant, "country", "") or "").strip()
+    address = str(getattr(applicant, "address", "") or "").strip()
+    return bool(name and country and address)
+
+
+def _is_complete_inventor(inventor) -> bool:
+    name = str(getattr(inventor, "name", "") or "").strip()
+    country = str(getattr(inventor, "nationality", "") or "").strip()
+    address = str(getattr(inventor, "address", "") or "").strip()
+    return bool(name and country and address)
+
+
+def _validate_final_mode_contacts(*, project_mode: str, applicants: list, inventors: list) -> None:
+    if project_mode != "final":
+        return
+    if not any(_is_complete_applicant(applicant) for applicant in applicants):
+        raise ValueError(
+            "For Final Docket, at least one applicant with name, country, and address is required."
+        )
+    if not any(_is_complete_inventor(inventor) for inventor in inventors):
+        raise ValueError(
+            "For Final Docket, at least one inventor with name, country, and address is required."
+        )
 
 
 def _persist_priorities_and_international(
@@ -244,6 +284,7 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
 
     if payload.in_application_no:
         parse_in_application_number(payload.in_application_no)
+    _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
 
     validate_create_project_filing_windows(payload)
 
@@ -259,6 +300,11 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
             )
         ]
     primary_applicant = source_applicants[0]
+    _validate_final_mode_contacts(
+        project_mode=payload.project_mode,
+        applicants=list(source_applicants),
+        inventors=list(payload.inventors),
+    )
 
     project = PatentProject(
         docket_no=payload.docket_no,
@@ -313,8 +359,11 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
     return _project_to_response(session, project)
 
 
-def list_projects(session: Session) -> list[dict]:
-    projects = session.exec(select(PatentProject).order_by(PatentProject.id.desc())).all()
+def list_projects(session: Session, include_archived: bool = False) -> list[dict]:
+    query = select(PatentProject)
+    if not include_archived:
+        query = query.where(PatentProject.is_archived.is_(False))
+    projects = session.exec(query.order_by(PatentProject.id.desc())).all()
     return [_project_to_response(session, project) for project in projects]
 
 
@@ -322,6 +371,18 @@ def get_project(session: Session, project_id: int) -> dict | None:
     project = session.get(PatentProject, project_id)
     if not project:
         return None
+    return _project_to_response(session, project)
+
+
+def archive_project(session: Session, project_id: int) -> dict | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    project.is_archived = True
+    project.modified_date = datetime.utcnow()
+    session.add(project)
+    session.commit()
+    session.refresh(project)
     return _project_to_response(session, project)
 
 
@@ -368,6 +429,22 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
         raise ValueError("IN application number is required for final projects")
     if payload.project_mode == "final" and not payload.in_application_date:
         raise ValueError("IN application date is required for final projects")
+    _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
+
+    existing_applicants = session.exec(
+        select(PatentApplicant).where(PatentApplicant.project_id == project_id)
+    ).all()
+    existing_inventors = session.exec(
+        select(PatentInventor).where(PatentInventor.project_id == project_id)
+    ).all()
+    effective_mode = payload.project_mode or project.project_mode
+    effective_applicants = list(payload.applicants) if payload.applicants is not None else list(existing_applicants)
+    effective_inventors = list(payload.inventors) if payload.inventors is not None else list(existing_inventors)
+    _validate_final_mode_contacts(
+        project_mode=effective_mode,
+        applicants=effective_applicants,
+        inventors=effective_inventors,
+    )
     validate_create_project_filing_windows(
         PatentProjectCreate(
             project_mode=payload.project_mode or project.project_mode,

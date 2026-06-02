@@ -14,6 +14,7 @@ from app.domain.status_workflow import (
     validate_timeline_updates,
 )
 from app.models.applications import ApplicationData, ApplicationState, Status
+from app.patents.models import PatentAgent, PatentClient
 from app.schemas.applications import (
     ApplicationCreate,
     ProjectDetailRead,
@@ -70,6 +71,7 @@ def _states_grouped(
 
 
 def _read_model_with_timeline(
+    session: Session,
     data: ApplicationData,
     state: ApplicationState,
     status: Status,
@@ -85,6 +87,29 @@ def _read_model_with_timeline(
         ReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
     ]
     filing_date = tl.filing_date or state.application_date
+    client_summary = None
+    if data.client_id:
+        client = session.get(PatentClient, data.client_id)
+        if client:
+            client_summary = {
+                "id": client.id,
+                "client_code": client.client_code,
+                "name": client.name,
+            }
+    attorney_summary = None
+    if data.attorney_id:
+        attorney = session.get(PatentAgent, data.attorney_id)
+        if attorney:
+            attorney_summary = {
+                "id": attorney.id,
+                "name": attorney.name,
+                "agent_code": attorney.agent_code,
+                "address": attorney.address,
+                "mobile_1": attorney.mobile_1,
+                "mobile_2": attorney.mobile_2,
+                "email_1": attorney.email_1,
+                "email_2": attorney.email_2,
+            }
     return ApplicationRead(
         id=data.id or 0,
         project_code=data.project_code,
@@ -94,6 +119,10 @@ def _read_model_with_timeline(
         applicant_name=data.applicant_name,
         applicant_address=data.applicant_address,
         application_title=data.application_title,
+        client_id=data.client_id,
+        attorney_id=data.attorney_id,
+        client=client_summary,
+        attorney=attorney_summary,
         application_current_status=status.status,
         comments=data.comments,
         filing_date=tl.filing_date,
@@ -130,6 +159,8 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
         project_code=application.project_code,
         application_num=application.application_number,
         applicant_name=application.applicant_name,
+        client_id=application.client_id,
+        attorney_id=application.attorney_id,
         applicant_address=application.applicant_address,
         application_title=application.application_title,
         comments=application.comments,
@@ -162,7 +193,7 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
 
     today = date.today()
     states = [(db_state.id or 0, db_state.application_date, status_row.status)]
-    return _read_model_with_timeline(db_application, db_state, status_row, states, today)
+    return _read_model_with_timeline(session, db_application, db_state, status_row, states, today)
 
 
 def get_applications(session: Session) -> List[ApplicationRead]:
@@ -190,7 +221,7 @@ def get_applications(session: Session) -> List[ApplicationRead]:
     nums = [data.application_num for data, _state, _status in rows]
     grouped = _states_grouped(session, nums)
     return [
-        _read_model_with_timeline(data, state, status, grouped.get(data.application_num, []), today)
+        _read_model_with_timeline(session, data, state, status, grouped.get(data.application_num, []), today)
         for data, state, status in rows
     ]
 
@@ -221,7 +252,7 @@ def get_application_by_id(session: Session, application_id: int) -> Optional[App
     data, state, status = row
     today = date.today()
     states = _states_ordered_for_app(session, data.application_num)
-    return _read_model_with_timeline(data, state, status, states, today)
+    return _read_model_with_timeline(session, data, state, status, states, today)
 
 
 def get_application_timeline(session: Session, application_id: int) -> Optional[ApplicationTimelineRead]:
@@ -292,6 +323,10 @@ def update_application(session: Session, application_id: int, update_data: Appli
 
     if "applicant_name" in update_dict:
         db_application.applicant_name = update_dict["applicant_name"]
+    if "client_id" in update_dict:
+        db_application.client_id = update_dict["client_id"]
+    if "attorney_id" in update_dict:
+        db_application.attorney_id = update_dict["attorney_id"]
     if "applicant_address" in update_dict:
         db_application.applicant_address = update_dict["applicant_address"]
     if "application_title" in update_dict:
@@ -453,6 +488,10 @@ def get_project_detail(session: Session, application_id: int) -> Optional[Projec
         applicant_name=app_read.applicant_name,
         applicant_address=app_read.applicant_address,
         application_title=app_read.application_title,
+        client_id=app_read.client_id,
+        attorney_id=app_read.attorney_id,
+        client=app_read.client,
+        attorney=app_read.attorney,
         application_current_status=app_read.application_current_status,
         comments=app_read.comments,
         timeline=timeline,

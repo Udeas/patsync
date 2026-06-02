@@ -13,6 +13,7 @@ from app.domain.tm_status_workflow import (
     validate_timeline_updates,
 )
 from app.domain.tm_timeline import build_timeline_for_tm_application
+from app.patents.models import PatentAgent, PatentClient
 from app.tm_class_catalog import class_description_for
 from app.models.trademark import TmApplicationData, TmApplicationState, TmStatus
 from app.schemas.trademark import (
@@ -71,6 +72,7 @@ def _states_grouped(
 
 
 def _read_model_with_timeline(
+    session: Session,
     data: TmApplicationData,
     state: TmApplicationState,
     status: TmStatus,
@@ -86,6 +88,29 @@ def _read_model_with_timeline(
         TmReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
     ]
     filing_date = tl.filing_date or state.application_date
+    client_summary = None
+    if data.client_id:
+        client = session.get(PatentClient, data.client_id)
+        if client:
+            client_summary = {
+                "id": client.id,
+                "client_code": client.client_code,
+                "name": client.name,
+            }
+    attorney_summary = None
+    if data.attorney_id:
+        attorney = session.get(PatentAgent, data.attorney_id)
+        if attorney:
+            attorney_summary = {
+                "id": attorney.id,
+                "name": attorney.name,
+                "agent_code": attorney.agent_code,
+                "address": attorney.address,
+                "mobile_1": attorney.mobile_1,
+                "mobile_2": attorney.mobile_2,
+                "email_1": attorney.email_1,
+                "email_2": attorney.email_2,
+            }
     return TmApplicationRead(
         id=data.id or 0,
         project_code=data.project_code,
@@ -97,6 +122,10 @@ def _read_model_with_timeline(
         tm_class=data.tm_class,
         tm_class_description=class_description_for(data.tm_class),
         applicant_address=data.applicant_address,
+        client_id=data.client_id,
+        attorney_id=data.attorney_id,
+        client=client_summary,
+        attorney=attorney_summary,
         application_current_status=status.status,
         comments=data.comments,
         filing_date=tl.filing_date,
@@ -134,6 +163,8 @@ def create_tm_application(session: Session, application: TmApplicationCreate) ->
         project_code=application.project_code,
         application_num=application.application_number,
         applicant_name=application.applicant_name,
+        client_id=application.client_id,
+        attorney_id=application.attorney_id,
         tm_name=application.tm_name,
         tm_class=application.tm_class,
         applicant_address=application.applicant_address,
@@ -167,7 +198,7 @@ def create_tm_application(session: Session, application: TmApplicationCreate) ->
 
     today = date.today()
     states = [(db_state.id or 0, db_state.application_date, status_row.status)]
-    return _read_model_with_timeline(db_application, db_state, status_row, states, today)
+    return _read_model_with_timeline(session, db_application, db_state, status_row, states, today)
 
 
 def get_tm_applications(session: Session) -> List[TmApplicationRead]:
@@ -195,7 +226,7 @@ def get_tm_applications(session: Session) -> List[TmApplicationRead]:
     nums = [data.application_num for data, _state, _status in rows]
     grouped = _states_grouped(session, nums)
     return [
-        _read_model_with_timeline(data, state, status, grouped.get(data.application_num, []), today)
+        _read_model_with_timeline(session, data, state, status, grouped.get(data.application_num, []), today)
         for data, state, status in rows
     ]
 
@@ -226,7 +257,7 @@ def get_tm_application_by_id(session: Session, application_id: int) -> Optional[
     data, state, status = row
     today = date.today()
     states = _states_ordered_for_app(session, data.application_num)
-    return _read_model_with_timeline(data, state, status, states, today)
+    return _read_model_with_timeline(session, data, state, status, states, today)
 
 
 def get_tm_application_timeline(session: Session, application_id: int) -> Optional[TmApplicationTimelineRead]:
@@ -311,6 +342,10 @@ def update_tm_application(
         db_application.project_code = update_dict["project_code"]
     if "applicant_name" in update_dict:
         db_application.applicant_name = update_dict["applicant_name"]
+    if "client_id" in update_dict:
+        db_application.client_id = update_dict["client_id"]
+    if "attorney_id" in update_dict:
+        db_application.attorney_id = update_dict["attorney_id"]
     if "tm_name" in update_dict:
         db_application.tm_name = update_dict["tm_name"]
     if "tm_class" in update_dict:
@@ -478,6 +513,10 @@ def get_tm_project_detail(session: Session, application_id: int) -> Optional[TmP
         tm_class=app_read.tm_class,
         tm_class_description=class_description_for(app_read.tm_class),
         applicant_address=app_read.applicant_address,
+        client_id=app_read.client_id,
+        attorney_id=app_read.attorney_id,
+        client=app_read.client,
+        attorney=app_read.attorney,
         application_current_status=app_read.application_current_status,
         comments=app_read.comments,
         timeline=timeline,
