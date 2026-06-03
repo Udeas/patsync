@@ -743,6 +743,82 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
     )
 
 
+def _run_uspto_tracker_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS uspto_tracker (
+                    id SERIAL PRIMARY KEY,
+                    docket_no VARCHAR(64) NOT NULL,
+                    application_no VARCHAR(32) NOT NULL DEFAULT '',
+                    doc_code VARCHAR(32) NOT NULL,
+                    particulars TEXT NOT NULL DEFAULT '',
+                    event_date VARCHAR(16) NOT NULL,
+                    final_due_date DATE,
+                    work_status VARCHAR(32) NOT NULL DEFAULT 'Pending',
+                    calendar_event_ids TEXT NOT NULL DEFAULT '',
+                    template_status VARCHAR(64) NOT NULL DEFAULT '',
+                    is_closure_done BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_uspto_tracker_natural_key
+                        UNIQUE (docket_no, doc_code, event_date, application_no)
+                );
+                """
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS uspto_tracker (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    docket_no TEXT NOT NULL,
+                    application_no TEXT NOT NULL DEFAULT '',
+                    doc_code TEXT NOT NULL,
+                    particulars TEXT NOT NULL DEFAULT '',
+                    event_date TEXT NOT NULL,
+                    final_due_date TEXT,
+                    work_status TEXT NOT NULL DEFAULT 'Pending',
+                    calendar_event_ids TEXT NOT NULL DEFAULT '',
+                    template_status TEXT NOT NULL DEFAULT '',
+                    is_closure_done INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE (docket_no, doc_code, event_date, application_no)
+                );
+                """
+            )
+        )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_uspto_tracker_doc_code ON uspto_tracker (doc_code)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_uspto_tracker_work_status ON uspto_tracker (work_status)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_uspto_tracker_docket_no ON uspto_tracker (docket_no)"
+        )
+    )
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS completion_date DATE"
+            )
+        )
+    else:
+        cols = conn.execute(text("PRAGMA table_info(uspto_tracker)")).fetchall()
+        col_names = {row[1] for row in cols} if cols else set()
+        if "completion_date" not in col_names:
+            conn.execute(text("ALTER TABLE uspto_tracker ADD COLUMN completion_date TEXT"))
+
+
 def run_schema_migrations():
     backend = engine.url.get_backend_name()
     with engine.begin() as conn:
@@ -751,6 +827,7 @@ def run_schema_migrations():
         else:
             _run_sqlite_migrations(conn)
         _run_patent_metadata_migrations(conn, backend)
+        _run_uspto_tracker_migration(conn, backend)
         _seed_patent_statuses(conn, backend)
         _seed_tm_statuses(conn, backend)
 

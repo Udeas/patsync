@@ -1,0 +1,12 @@
+# US PTO module — data stored in tracker_db table uspto_tracker (same DATABASE_URL as main app)
+# Run from patsync/backend: uv sync && uv run uvicorn app.main:app --reload
+#
+# Optional: drop legacy separate database after migration:
+#   DROP DATABASE IF EXISTS us_pto_db;
+US_PTO_SQLITE_SOURCE=C:/path/to/stem-v2/stem.db
+US_PTO_CRED_DIR=C:/path/to/stem-v2/cred
+US_PTO_CALENDAR_ID=mo@patvent.com
+US_PTO_IMAP_HOST=imap.gmail.com
+US_PTO_IMAP_USERNAME=redacted@example.com
+US_PTO_IMAP_PASSWORD=REDACTED-ROTATE-ME
+US_PTO_IMAP_MAILBOX=Tracker_Updates
