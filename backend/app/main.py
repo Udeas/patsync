@@ -2,10 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel
 from app import models  # noqa: F401
+from app.us_pto.models import UsptoTracker  # noqa: F401
 from app.database import engine, run_schema_migrations
 from app.routers.health import router as health_router
 from app.routers.applications import router as applications_router
 from app.routers.status import router as status_router
+from app.routers.trademark import router as trademark_router
+from app.routers.tm_status import router as tm_status_router
+from app.patents.router import router as patents_router
+from app.us_pto.router import router as us_pto_router
 
 app = FastAPI()
 
@@ -20,11 +25,17 @@ app.add_middleware(
 app.include_router(health_router, prefix="/api")
 app.include_router(applications_router, prefix="/api/applications")
 app.include_router(status_router, prefix="/api/status")
+app.include_router(trademark_router, prefix="/api/tm-applications")
+app.include_router(tm_status_router, prefix="/api/tm-status")
+app.include_router(patents_router, prefix="/api/patents")
+app.include_router(us_pto_router, prefix="/api/us-pto", tags=["us-pto"])
+
 
 @app.on_event("startup")
 def on_startup():
     run_schema_migrations()
     SQLModel.metadata.create_all(engine)
+
 
 @app.get("/")
 def read_root():
