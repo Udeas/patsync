@@ -33,8 +33,10 @@ app.include_router(us_pto_router, prefix="/api/us-pto", tags=["us-pto"])
 
 @app.on_event("startup")
 def on_startup():
-    run_schema_migrations()
+    # Create model-defined tables first so raw migrations that ALTER or
+    # reference them (e.g. patent_project) succeed on a fresh database.
     SQLModel.metadata.create_all(engine)
+    run_schema_migrations()
 
 
 @app.get("/")
