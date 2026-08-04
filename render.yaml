@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: patsync-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: patsync-db
+          property: connectionString
+      # US_PTO_* vars are optional. The IMAP/calendar/sqlite paths below use
+      # local Windows paths in dev and must be set/reworked for the cloud if
+      # the USPTO module is used. Leave unset to run the core API only.
+      # - key: US_PTO_IMAP_HOST
+      #   sync: false
+      # - key: US_PTO_IMAP_USERNAME
+      #   sync: false
+      # - key: US_PTO_IMAP_PASSWORD
+      #   sync: false
+
+databases:
+  - name: patsync-db
+    plan: free
