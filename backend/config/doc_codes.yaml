@@ -1,0 +1,35 @@
+calendar_profiles:
+  three_month:
+    base_months: 3
+    extension_months: 0
+  five_month:
+    base_months: 5
+    extension_months: 0
+  abn_special:
+    months: [16, 20, 23, 24]
+
+tracked_doc_codes:
+  - code: CTNF
+    calendar_profile: five_month
+    email_template: CTNF
+  - code: CTFR
+    calendar_profile: five_month
+    email_template: CTFR
+  - code: NT.INC.REPLY
+    calendar_profile: three_month
+  - code: NT.CR.APP.PA
+    calendar_profile: three_month
+  - code: NTC.MISS.PRT
+    calendar_profile: three_month
+    email_template: NTC.MISS.PRT
+  - code: M327
+    calendar_profile: three_month
+  - code: NOA
+    calendar_profile: three_month
+    email_template: NOA
+  - code: ABN
+    calendar_profile: abn_special
+
+fallback:
+  enabled: false
+  calendar_profile: ""

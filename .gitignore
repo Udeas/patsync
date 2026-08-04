@@ -4,6 +4,7 @@
 backend/.env
 __pycache__/
 *.pyc
+backend/cred/
 *.egg-info/
 .next/
 node_modules/
