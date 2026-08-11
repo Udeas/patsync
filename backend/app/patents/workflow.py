@@ -113,6 +113,13 @@ def _add_months(value: date, months: int) -> date:
     return date(year, month, day)
 
 
+# Patents (Amendment) Rules, 2024 — Form 18 filing window shortened from 48
+# to 31 months for applications filed on or after this date.
+RFE_RULE_CHANGE_DATE = date(2024, 3, 15)
+RFE_MONTHS_NEW = 31
+RFE_MONTHS_OLD = 48
+
+
 def compute_rfe_deadline(
     in_application_date: date,
     priority_dates: Sequence[date] = (),
@@ -120,7 +127,8 @@ def compute_rfe_deadline(
     anchor = in_application_date
     if priority_dates:
         anchor = min(in_application_date, min(priority_dates))
-    return _add_months(anchor, 31)
+    months = RFE_MONTHS_NEW if in_application_date >= RFE_RULE_CHANGE_DATE else RFE_MONTHS_OLD
+    return _add_months(anchor, months)
 
 
 def _validate_request_for_examination(
@@ -143,12 +151,10 @@ def _validate_request_for_examination(
 
     if rfe_date > deadline:
 
+        months = RFE_MONTHS_NEW if in_application_date >= RFE_RULE_CHANGE_DATE else RFE_MONTHS_OLD
         raise ValueError(
-
-            "Request for Examination date must be within 31 months of the earlier of "
-
+            f"Request for Examination date must be within {months} months of the earlier of "
             "convention filing date or IN application filing date"
-
         )
 
 

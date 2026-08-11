@@ -30,6 +30,8 @@ from app.patents.patent_status_catalog import (
 
 from app.patents.workflow import (
 
+    compute_rfe_deadline,
+
     derive_current_status,
 
     enabled_status_ids,
@@ -355,5 +357,48 @@ def test_current_status_rfe_over_publication():
     assert current[0] == STATUS_ID_REQUEST_FOR_EXAMINATION
 
     assert current[1] == date(2026, 2, 1)
+
+
+def test_rfe_deadline_is_31_months_on_or_after_rule_change_date():
+    # Patents (Amendment) Rules, 2024: applications filed on/after 15-Mar-2024
+    # get 31 months (from the earlier of priority date or filing date).
+    assert compute_rfe_deadline(date(2024, 3, 15)) == date(2026, 10, 15)
+    assert compute_rfe_deadline(date(2026, 1, 1)) == date(2028, 8, 1)
+
+
+def test_rfe_deadline_is_48_months_before_rule_change_date():
+    # Applications filed before 15-Mar-2024 keep the old 48-month window.
+    assert compute_rfe_deadline(date(2024, 3, 14)) == date(2028, 3, 14)
+    assert compute_rfe_deadline(date(2020, 1, 1)) == date(2024, 1, 1)
+
+
+def test_rfe_deadline_uses_filing_date_not_priority_date_for_rule_selection():
+    # Rule cutoff is based on the IN filing date, per the amendment text —
+    # not the (possibly older) priority date used as the deadline anchor.
+    in_date = date(2024, 6, 1)  # after cutoff -> 31 months
+    priority = date(2023, 1, 1)  # before cutoff, but only used as the anchor
+    # anchor = min(in_date, priority) = 2023-01-01; +31 months = 2025-08-01
+    assert compute_rfe_deadline(in_date, [priority]) == date(2025, 8, 1)
+
+
+def test_rfe_within_48_months_for_pre_amendment_filing():
+    validate_timeline_updates(
+        [
+            (STATUS_ID_APPLICATION_FILED, date(2023, 1, 1)),
+            (STATUS_ID_REQUEST_FOR_EXAMINATION, date(2026, 12, 1)),
+        ],
+        requires_non_provisional=False,
+        in_application_date=date(2023, 1, 1),
+    )
+
+    with pytest.raises(ValueError, match="48 months"):
+        validate_timeline_updates(
+            [
+                (STATUS_ID_APPLICATION_FILED, date(2023, 1, 1)),
+                (STATUS_ID_REQUEST_FOR_EXAMINATION, date(2027, 2, 1)),
+            ],
+            requires_non_provisional=False,
+            in_application_date=date(2023, 1, 1),
+        )
 
 
