@@ -142,7 +142,7 @@ class PatentProjectRead(SQLModel):
     due_action: Optional[str] = None
     action_due_date: Optional[date] = None
     inventors: list[PatentInventorRead] = Field(default_factory=list)
-    priorities: list[PatentPriorityRead] = Field(default_factory=list)
+    priorities: Optional[list[PatentPriorityRead]] = Field(default_factory=list)
     international_applications: list[PatentInternationalRead] = Field(default_factory=list)
     status_events: list[PatentStatusEventRead] = Field(default_factory=list)
     attorney: Optional[PatentAgentSummary] = None
