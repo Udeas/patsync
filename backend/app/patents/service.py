@@ -25,6 +25,8 @@ from .schemas import (
     PatentClientInput,
     PatentClientUpdate,
     PatentDraftFinalizeRequest,
+    PatentInternationalInput,
+    PatentPriorityInput,
     PatentProjectCreate,
     PatentProjectDetailUpdate,
     PatentProjectUpdate,
@@ -437,9 +439,39 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
     existing_inventors = session.exec(
         select(PatentInventor).where(PatentInventor.project_id == project_id)
     ).all()
+    existing_priorities = session.exec(
+        select(PatentPriority).where(PatentPriority.project_id == project_id)
+    ).all()
+    existing_international = session.exec(
+        select(PatentInternationalApplication).where(PatentInternationalApplication.project_id == project_id)
+    ).all()
     effective_mode = payload.project_mode or project.project_mode
     effective_applicants = list(payload.applicants) if payload.applicants is not None else list(existing_applicants)
     effective_inventors = list(payload.inventors) if payload.inventors is not None else list(existing_inventors)
+    effective_priorities = (
+        list(payload.priorities)
+        if payload.priorities is not None
+        else [
+            PatentPriorityInput(
+                priority_application_no=p.priority_application_no,
+                priority_application_date=p.priority_application_date,
+                country=p.country,
+                title=p.title,
+            )
+            for p in existing_priorities
+        ]
+    )
+    effective_international = (
+        list(payload.international_applications)
+        if payload.international_applications is not None
+        else [
+            PatentInternationalInput(
+                international_application_no=r.international_application_no,
+                international_application_date=r.international_application_date,
+            )
+            for r in existing_international
+        ]
+    )
     _validate_final_mode_contacts(
         project_mode=effective_mode,
         applicants=effective_applicants,
@@ -463,8 +495,8 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
             provisional_kind=payload.provisional_kind,
             pct_wipo_filed_only=payload.pct_wipo_filed_only if payload.pct_wipo_filed_only is not None else project.pct_wipo_filed_only,
             inventors=payload.inventors or [],
-            priorities=payload.priorities or [],
-            international_applications=payload.international_applications or [],
+            priorities=effective_priorities,
+            international_applications=effective_international,
         )
     )
 
