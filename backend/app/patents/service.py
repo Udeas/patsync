@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
@@ -60,61 +61,36 @@ def _seed_application_filed_if_final(
     )
 
 
-def _load_project_relations(session: Session, project: PatentProject) -> dict:
-    applicants = session.exec(
-        select(PatentApplicant)
-        .where(PatentApplicant.project_id == project.id)
-        .order_by(PatentApplicant.id.asc())
-    ).all()
-    inventors = session.exec(
-        select(PatentInventor)
-        .where(PatentInventor.project_id == project.id)
-        .order_by(PatentInventor.id.asc())
-    ).all()
-    priorities = session.exec(
-        select(PatentPriority)
-        .where(PatentPriority.project_id == project.id)
-        .order_by(PatentPriority.priority_application_date.asc(), PatentPriority.id.asc())
-    ).all()
-    international_apps = session.exec(
-        select(PatentInternationalApplication)
-        .where(PatentInternationalApplication.project_id == project.id)
-        .order_by(
-            PatentInternationalApplication.international_application_date.asc(),
-            PatentInternationalApplication.id.asc(),
-        )
-    ).all()
-    status_events = session.exec(
-        select(PatentStatusEvent)
-        .where(PatentStatusEvent.project_id == project.id)
-        .order_by(PatentStatusEvent.status_date.asc(), PatentStatusEvent.status_id.asc())
-    ).all()
+def _agent_summary(agent: PatentAgent) -> dict:
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "agent_code": agent.agent_code,
+        "address": agent.address,
+        "mobile_1": agent.mobile_1,
+        "mobile_2": agent.mobile_2,
+        "email_1": agent.email_1,
+        "email_2": agent.email_2,
+    }
 
-    attorney = None
-    if project.attorney_id:
-        agent = session.get(PatentAgent, project.attorney_id)
-        if agent:
-            attorney = {
-                "id": agent.id,
-                "name": agent.name,
-                "agent_code": agent.agent_code,
-                "address": agent.address,
-                "mobile_1": agent.mobile_1,
-                "mobile_2": agent.mobile_2,
-                "email_1": agent.email_1,
-                "email_2": agent.email_2,
-            }
 
-    client = None
-    if project.client_id:
-        patent_client = session.get(PatentClient, project.client_id)
-        if patent_client:
-            client = {
-                "id": patent_client.id,
-                "client_code": patent_client.client_code,
-                "name": patent_client.name,
-            }
+def _client_summary(patent_client: PatentClient) -> dict:
+    return {
+        "id": patent_client.id,
+        "client_code": patent_client.client_code,
+        "name": patent_client.name,
+    }
 
+
+def _shape_relations(
+    applicants,
+    inventors,
+    priorities,
+    international_apps,
+    status_events,
+    attorney,
+    client,
+) -> dict:
     return {
         "applicants": [
             {
@@ -158,8 +134,130 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
     }
 
 
-def _project_to_response(session: Session, project: PatentProject) -> dict:
-    relations = _load_project_relations(session, project)
+def _agent_to_dict(agent: PatentAgent | None) -> dict | None:
+    if not agent:
+        return None
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "agent_code": agent.agent_code,
+        "address": agent.address,
+        "mobile_1": agent.mobile_1,
+        "mobile_2": agent.mobile_2,
+        "email_1": agent.email_1,
+        "email_2": agent.email_2,
+    }
+
+
+def _client_to_dict(patent_client: PatentClient | None) -> dict | None:
+    if not patent_client:
+        return None
+    return {
+        "id": patent_client.id,
+        "client_code": patent_client.client_code,
+        "name": patent_client.name,
+    }
+
+
+def _build_relations_dict(
+    *,
+    applicants,
+    inventors,
+    priorities,
+    international_apps,
+    status_events,
+    attorney,
+    client,
+) -> dict:
+    return {
+        "applicants": [
+            {"name": applicant.name, "country": applicant.country, "address": applicant.address}
+            for applicant in applicants
+        ],
+        "inventors": [
+            {"name": inv.name, "nationality": inv.nationality, "address": inv.address}
+            for inv in inventors
+        ],
+        "priorities": [
+            {
+                "priority_application_no": p.priority_application_no,
+                "priority_application_date": p.priority_application_date,
+                "country": p.country,
+                "title": p.title,
+            }
+            for p in priorities
+        ],
+        "international_applications": [
+            {
+                "international_application_no": ia.international_application_no,
+                "international_application_date": ia.international_application_date,
+            }
+            for ia in international_apps
+        ],
+        "status_events": [
+            {"status_id": event.status_id, "status_date": event.status_date}
+            for event in status_events
+        ],
+        "attorney": attorney,
+        "client": client,
+        "_status_events_raw": status_events,
+    }
+
+
+def _load_project_relations(session: Session, project: PatentProject) -> dict:
+    applicants = session.exec(
+        select(PatentApplicant)
+        .where(PatentApplicant.project_id == project.id)
+        .order_by(PatentApplicant.id.asc())
+    ).all()
+    inventors = session.exec(
+        select(PatentInventor)
+        .where(PatentInventor.project_id == project.id)
+        .order_by(PatentInventor.id.asc())
+    ).all()
+    priorities = session.exec(
+        select(PatentPriority)
+        .where(PatentPriority.project_id == project.id)
+        .order_by(PatentPriority.priority_application_date.asc(), PatentPriority.id.asc())
+    ).all()
+    international_apps = session.exec(
+        select(PatentInternationalApplication)
+        .where(PatentInternationalApplication.project_id == project.id)
+        .order_by(
+            PatentInternationalApplication.international_application_date.asc(),
+            PatentInternationalApplication.id.asc(),
+        )
+    ).all()
+    status_events = session.exec(
+        select(PatentStatusEvent)
+        .where(PatentStatusEvent.project_id == project.id)
+        .order_by(PatentStatusEvent.status_date.asc(), PatentStatusEvent.status_id.asc())
+    ).all()
+
+    attorney = (
+        _agent_to_dict(session.get(PatentAgent, project.attorney_id))
+        if project.attorney_id
+        else None
+    )
+    client = (
+        _client_to_dict(session.get(PatentClient, project.client_id))
+        if project.client_id
+        else None
+    )
+
+    return _build_relations_dict(
+        applicants=applicants,
+        inventors=inventors,
+        priorities=priorities,
+        international_apps=international_apps,
+        status_events=status_events,
+        attorney=attorney,
+        client=client,
+    )
+
+
+def _assemble_response(project: PatentProject, relations: dict) -> dict:
+    relations = dict(relations)
     status_events_raw = relations.pop("_status_events_raw")
     filled_status = {event.status_id: event.status_date for event in status_events_raw}
     current_status = derive_current_status(filled_status)
@@ -197,6 +295,10 @@ def _project_to_response(session: Session, project: PatentProject) -> dict:
         "action_due_date": action_due_date,
         **relations,
     }
+
+
+def _project_to_response(session: Session, project: PatentProject) -> dict:
+    return _assemble_response(project, _load_project_relations(session, project))
 
 
 def _validate_in_number_date_year_match(in_application_no: str | None, in_application_date) -> None:
@@ -361,12 +463,108 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
     return _project_to_response(session, project)
 
 
+def _load_relations_bulk(
+    session: Session, projects: list[PatentProject]
+) -> dict[int, dict]:
+    """Load every project's relations in a fixed number of queries (no N+1)."""
+    project_ids = [project.id for project in projects]
+
+    def _grouped(rows) -> dict[int, list]:
+        grouped: dict[int, list] = defaultdict(list)
+        for row in rows:
+            grouped[row.project_id].append(row)
+        return grouped
+
+    applicants_by = _grouped(
+        session.exec(
+            select(PatentApplicant)
+            .where(PatentApplicant.project_id.in_(project_ids))
+            .order_by(PatentApplicant.project_id.asc(), PatentApplicant.id.asc())
+        ).all()
+    )
+    inventors_by = _grouped(
+        session.exec(
+            select(PatentInventor)
+            .where(PatentInventor.project_id.in_(project_ids))
+            .order_by(PatentInventor.project_id.asc(), PatentInventor.id.asc())
+        ).all()
+    )
+    priorities_by = _grouped(
+        session.exec(
+            select(PatentPriority)
+            .where(PatentPriority.project_id.in_(project_ids))
+            .order_by(
+                PatentPriority.project_id.asc(),
+                PatentPriority.priority_application_date.asc(),
+                PatentPriority.id.asc(),
+            )
+        ).all()
+    )
+    international_by = _grouped(
+        session.exec(
+            select(PatentInternationalApplication)
+            .where(PatentInternationalApplication.project_id.in_(project_ids))
+            .order_by(
+                PatentInternationalApplication.project_id.asc(),
+                PatentInternationalApplication.international_application_date.asc(),
+                PatentInternationalApplication.id.asc(),
+            )
+        ).all()
+    )
+    status_events_by = _grouped(
+        session.exec(
+            select(PatentStatusEvent)
+            .where(PatentStatusEvent.project_id.in_(project_ids))
+            .order_by(
+                PatentStatusEvent.project_id.asc(),
+                PatentStatusEvent.status_date.asc(),
+                PatentStatusEvent.status_id.asc(),
+            )
+        ).all()
+    )
+
+    attorney_ids = {project.attorney_id for project in projects if project.attorney_id}
+    agents_by_id: dict[int, dict | None] = {}
+    if attorney_ids:
+        for agent in session.exec(
+            select(PatentAgent).where(PatentAgent.id.in_(attorney_ids))
+        ).all():
+            agents_by_id[agent.id] = _agent_to_dict(agent)
+
+    client_ids = {project.client_id for project in projects if project.client_id}
+    clients_by_id: dict[int, dict | None] = {}
+    if client_ids:
+        for patent_client in session.exec(
+            select(PatentClient).where(PatentClient.id.in_(client_ids))
+        ).all():
+            clients_by_id[patent_client.id] = _client_to_dict(patent_client)
+
+    relations_by_project: dict[int, dict] = {}
+    for project in projects:
+        relations_by_project[project.id] = _build_relations_dict(
+            applicants=applicants_by.get(project.id, []),
+            inventors=inventors_by.get(project.id, []),
+            priorities=priorities_by.get(project.id, []),
+            international_apps=international_by.get(project.id, []),
+            status_events=status_events_by.get(project.id, []),
+            attorney=agents_by_id.get(project.attorney_id) if project.attorney_id else None,
+            client=clients_by_id.get(project.client_id) if project.client_id else None,
+        )
+    return relations_by_project
+
+
 def list_projects(session: Session, include_archived: bool = False) -> list[dict]:
     query = select(PatentProject)
     if not include_archived:
         query = query.where(PatentProject.is_archived.is_(False))
     projects = session.exec(query.order_by(PatentProject.id.desc())).all()
-    return [_project_to_response(session, project) for project in projects]
+    if not projects:
+        return []
+    relations_by_project = _load_relations_bulk(session, projects)
+    return [
+        _assemble_response(project, relations_by_project[project.id])
+        for project in projects
+    ]
 
 
 def get_project(session: Session, project_id: int) -> dict | None:

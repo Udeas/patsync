@@ -71,6 +71,60 @@ def _states_grouped(
     return dict(grouped)
 
 
+def _client_summary(client: PatentClient) -> dict:
+    return {"id": client.id, "client_code": client.client_code, "name": client.name}
+
+
+def _attorney_summary(agent: PatentAgent) -> dict:
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "agent_code": agent.agent_code,
+        "address": agent.address,
+        "mobile_1": agent.mobile_1,
+        "mobile_2": agent.mobile_2,
+        "email_1": agent.email_1,
+        "email_2": agent.email_2,
+    }
+
+
+def _resolve_client_summary(session, client_id, clients_by_id):
+    if not client_id:
+        return None
+    if clients_by_id is not None:
+        return clients_by_id.get(client_id)
+    client = session.get(PatentClient, client_id)
+    return _client_summary(client) if client else None
+
+
+def _resolve_attorney_summary(session, attorney_id, agents_by_id):
+    if not attorney_id:
+        return None
+    if agents_by_id is not None:
+        return agents_by_id.get(attorney_id)
+    agent = session.get(PatentAgent, attorney_id)
+    return _attorney_summary(agent) if agent else None
+
+
+def _load_contacts_bulk(session: Session, datas) -> tuple[dict[int, dict], dict[int, dict]]:
+    """Batch-load client + attorney summaries for many rows (no per-row N+1)."""
+    client_ids = {d.client_id for d in datas if d.client_id}
+    attorney_ids = {d.attorney_id for d in datas if d.attorney_id}
+    clients_by_id: dict[int, dict] = {}
+    if client_ids:
+        for client in session.exec(
+            select(PatentClient).where(PatentClient.id.in_(client_ids))
+        ).all():
+            clients_by_id[client.id] = _client_summary(client)
+    agents_by_id: dict[int, dict] = {}
+    if attorney_ids:
+        for agent in session.exec(
+            select(PatentAgent).where(PatentAgent.id.in_(attorney_ids))
+        ).all():
+            agents_by_id[agent.id] = _attorney_summary(agent)
+    return clients_by_id, agents_by_id
+
+
 def _read_model_with_timeline(
     session: Session,
     data: TmApplicationData,
@@ -78,6 +132,8 @@ def _read_model_with_timeline(
     status: TmStatus,
     states_ordered: List[Tuple[int, date, str]],
     today: date,
+    clients_by_id: dict[int, dict] | None = None,
+    agents_by_id: dict[int, dict] | None = None,
 ) -> TmApplicationRead:
     tl = build_timeline_for_tm_application(
         states_ordered=states_ordered,
@@ -88,29 +144,8 @@ def _read_model_with_timeline(
         TmReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
     ]
     filing_date = tl.filing_date or state.application_date
-    client_summary = None
-    if data.client_id:
-        client = session.get(PatentClient, data.client_id)
-        if client:
-            client_summary = {
-                "id": client.id,
-                "client_code": client.client_code,
-                "name": client.name,
-            }
-    attorney_summary = None
-    if data.attorney_id:
-        attorney = session.get(PatentAgent, data.attorney_id)
-        if attorney:
-            attorney_summary = {
-                "id": attorney.id,
-                "name": attorney.name,
-                "agent_code": attorney.agent_code,
-                "address": attorney.address,
-                "mobile_1": attorney.mobile_1,
-                "mobile_2": attorney.mobile_2,
-                "email_1": attorney.email_1,
-                "email_2": attorney.email_2,
-            }
+    client_summary = _resolve_client_summary(session, data.client_id, clients_by_id)
+    attorney_summary = _resolve_attorney_summary(session, data.attorney_id, agents_by_id)
     return TmApplicationRead(
         id=data.id or 0,
         project_code=data.project_code,
@@ -225,8 +260,20 @@ def get_tm_applications(session: Session) -> List[TmApplicationRead]:
     today = date.today()
     nums = [data.application_num for data, _state, _status in rows]
     grouped = _states_grouped(session, nums)
+    clients_by_id, agents_by_id = _load_contacts_bulk(
+        session, [data for data, _state, _status in rows]
+    )
     return [
-        _read_model_with_timeline(session, data, state, status, grouped.get(data.application_num, []), today)
+        _read_model_with_timeline(
+            session,
+            data,
+            state,
+            status,
+            grouped.get(data.application_num, []),
+            today,
+            clients_by_id,
+            agents_by_id,
+        )
         for data, state, status in rows
     ]
 
