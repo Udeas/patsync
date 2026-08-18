@@ -27,7 +27,7 @@ _load_dotenv()
 CRED_DIR = os.environ.get("US_PTO_CRED_DIR", os.path.join(_STEM_V2_ROOT, "cred"))
 DOC_CODES_CONFIG = os.environ.get(
     "US_PTO_DOC_CODES_PATH",
-    os.path.join(_STEM_V2_ROOT, "config", "doc_codes.yaml"),
+    os.path.join(_BACKEND_ROOT, "config", "doc_codes.yaml"),
 )
 HTML_BACKUP_FILE = os.environ.get(
     "US_PTO_HTML_BACKUP_FILE",
