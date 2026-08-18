@@ -819,6 +819,49 @@ def _run_uspto_tracker_migration(conn, backend: str) -> None:
             conn.execute(text("ALTER TABLE uspto_tracker ADD COLUMN completion_date TEXT"))
 
 
+def _run_users_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(64) NOT NULL UNIQUE,
+                    display_name VARCHAR(128) NOT NULL DEFAULT '',
+                    password_hash VARCHAR(255) NOT NULL,
+                    role VARCHAR(16) NOT NULL DEFAULT 'user',
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_lower "
+                "ON users (lower(username))"
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                """
+            )
+        )
+
+
 def run_schema_migrations():
     backend = engine.url.get_backend_name()
     with engine.begin() as conn:
@@ -828,6 +871,7 @@ def run_schema_migrations():
             _run_sqlite_migrations(conn)
         _run_patent_metadata_migrations(conn, backend)
         _run_uspto_tracker_migration(conn, backend)
+        _run_users_migration(conn, backend)
         _seed_patent_statuses(conn, backend)
         _seed_tm_statuses(conn, backend)
 
