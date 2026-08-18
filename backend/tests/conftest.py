@@ -1,11 +1,9 @@
-"""
-Root conftest: set up environment and mock unavailable C extensions
-so that importing app.main works in the test environment.
-
-The venv's psycopg2 and google-auth C extensions are not loadable in
-this environment. We mock them at the sys.modules level before any
-test module imports app.main.
-"""
+# TEMPORARY ENV WORKAROUND — remove when the venv is rebuilt with Python 3.13 wheels.
+# Stubs ABI-broken C extensions (psycopg2, google-auth) so app.main imports under tests.
+#
+# The venv's psycopg2 and google-auth C extensions are not loadable in this environment
+# (Python 3.14 ABI mismatch). We stub them in sys.modules before any test module imports
+# app.main. Using setdefault() ensures real modules take precedence on a healthy venv.
 import os
 import sys
 from types import ModuleType
@@ -15,10 +13,14 @@ from unittest.mock import MagicMock
 #    connect to PostgreSQL at module load time.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
-# 2. Stub out psycopg2 (PostgreSQL C driver).
+# 2. Stub out psycopg2 (PostgreSQL C driver) and common submodules
+#    so any `from psycopg2.extras import ...` / `.extensions` / `.pool` doesn't fail.
 _psycopg2_mod = ModuleType("psycopg2")
 sys.modules.setdefault("psycopg2", _psycopg2_mod)
 sys.modules.setdefault("psycopg2._psycopg", MagicMock())
+sys.modules.setdefault("psycopg2.extras", MagicMock())
+sys.modules.setdefault("psycopg2.extensions", MagicMock())
+sys.modules.setdefault("psycopg2.pool", MagicMock())
 
 # 3. Stub out the full google.oauth2 / google.auth chain so that
 #    app.us_pto.auth.calendar / gmail imports don't fail.
