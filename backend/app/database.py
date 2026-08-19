@@ -385,6 +385,14 @@ def _run_postgres_tm_migrations(conn) -> None:
             """
         )
     )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS client_docket_no VARCHAR;
+            """
+        )
+    )
 
 
 def _sqlite_column_exists(conn, table_name: str, column_name: str) -> bool:
@@ -595,6 +603,8 @@ def _run_sqlite_tm_migrations(conn) -> None:
         conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN client_id INTEGER"))
     if not _sqlite_column_exists(conn, "tm_application_data", "attorney_id"):
         conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN attorney_id INTEGER"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "client_docket_no"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN client_docket_no TEXT"))
 
 
 def _seed_patent_statuses(conn, backend: str) -> None:

@@ -33,6 +33,7 @@ class TmApplicationCreate(SQLModel):
     tm_class: str = Field(min_length=1)
     client_id: Optional[int] = None
     attorney_id: Optional[int] = None
+    client_docket_no: Optional[str] = None
     applicant_address: str = Field(min_length=1)
     comments: Optional[str] = None
 
@@ -76,6 +77,7 @@ class TmApplicationRead(SQLModel):
     applicant_address: str
     client_id: Optional[int] = None
     attorney_id: Optional[int] = None
+    client_docket_no: Optional[str] = None
     client: Optional[PatentClientSummary] = None
     attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
@@ -111,6 +113,7 @@ class TmApplicationUpdate(SQLModel):
     tm_class: Optional[str] = None
     client_id: Optional[int] = None
     attorney_id: Optional[int] = None
+    client_docket_no: Optional[str] = None
     applicant_address: Optional[str] = None
     comments: Optional[str] = None
 
