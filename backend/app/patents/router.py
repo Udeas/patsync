@@ -117,7 +117,7 @@ def update_status_endpoint(
     session: Session = Depends(get_session),
 ):
     try:
-        project = update_status_event(session, project_id, payload.status_id, payload.status_date)
+        project = update_status_event(session, project_id, payload.status_id, payload.status_date, payload.abandon_reason)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not project:

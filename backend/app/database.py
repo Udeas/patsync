@@ -676,6 +676,8 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                     "ALTER TABLE patent_project ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE"
                 )
             )
+        if not _postgres_column_exists(conn, "patent_project", "abandon_reason"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN abandon_reason TEXT"))
         conn.execute(
             text(
                 """
@@ -736,6 +738,8 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                     "ALTER TABLE patent_project ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0"
                 )
             )
+        if not _sqlite_column_exists(conn, "patent_project", "abandon_reason"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN abandon_reason TEXT"))
     conn.execute(
         text(
             """

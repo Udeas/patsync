@@ -17,7 +17,7 @@ from .models import (
     PatentProject,
     PatentStatusEvent,
 )
-from .patent_status_catalog import STATUS_ID_APPLICATION_FILED
+from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED
 from .reminders import compute_next_patent_action
 from .patent_status_catalog import ALL_STATUS_IDS
 from .schemas import (
@@ -289,6 +289,7 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         "pct_wipo_filed_only": project.pct_wipo_filed_only,
         "is_archived": project.is_archived,
         "client_docket_no": project.client_docket_no,
+        "abandon_reason": project.abandon_reason,
         "current_status_id": current_status[0] if current_status else None,
         "current_status_date": current_status[1] if current_status else None,
         "due_action": due_action,
@@ -885,10 +886,16 @@ def update_project_detail(
     return _project_to_response(session, project)
 
 
-def update_status_event(session: Session, project_id: int, status_id: int, status_date) -> dict | None:
+def update_status_event(session: Session, project_id: int, status_id: int, status_date, abandon_reason: str | None = None) -> dict | None:
     project = session.get(PatentProject, project_id)
     if not project:
         return None
+
+    if status_id == STATUS_ID_ABANDONED:
+        reason = (abandon_reason or "").strip()
+        if not reason:
+            raise ValueError("Abandon reason is required.")
+        project.abandon_reason = reason
 
     events = session.exec(
         select(PatentStatusEvent).where(PatentStatusEvent.project_id == project_id)

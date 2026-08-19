@@ -148,6 +148,7 @@ class PatentProjectRead(SQLModel):
     attorney: Optional[PatentAgentSummary] = None
     client: Optional[PatentClientSummary] = None
     client_docket_no: Optional[str] = None
+    abandon_reason: Optional[str] = None
     is_archived: bool = False
 
 
@@ -165,6 +166,7 @@ class PatentDraftFinalizeRequest(SQLModel):
 class PatentStatusUpdate(SQLModel):
     status_id: int = Field(gt=0)
     status_date: date
+    abandon_reason: Optional[str] = None
 
 
 class PatentProjectUpdate(SQLModel):

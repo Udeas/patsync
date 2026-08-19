@@ -23,6 +23,7 @@ class PatentProject(SQLModel, table=True):
     attorney_id: Optional[int] = Field(default=None, foreign_key="patent_agent.id")
     client_id: Optional[int] = Field(default=None, foreign_key="patent_client.id")
     client_docket_no: Optional[str] = Field(default=None)
+    abandon_reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     application_type: Optional[str] = Field(default=None)
     provisional_kind: Optional[str] = Field(default=None, max_length=3)
     pct_wipo_filed_only: bool = Field(default=False)
