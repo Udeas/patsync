@@ -156,6 +156,7 @@ def _read_model_with_timeline(
         application_title=data.application_title,
         client_id=data.client_id,
         attorney_id=data.attorney_id,
+        client_docket_no=data.client_docket_no,
         client=client_summary,
         attorney=attorney_summary,
         application_current_status=status.status,
@@ -196,6 +197,7 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
         applicant_name=application.applicant_name,
         client_id=application.client_id,
         attorney_id=application.attorney_id,
+        client_docket_no=application.client_docket_no,
         applicant_address=application.applicant_address,
         application_title=application.application_title,
         comments=application.comments,
@@ -374,6 +376,8 @@ def update_application(session: Session, application_id: int, update_data: Appli
         db_application.client_id = update_dict["client_id"]
     if "attorney_id" in update_dict:
         db_application.attorney_id = update_dict["attorney_id"]
+    if "client_docket_no" in update_dict:
+        db_application.client_docket_no = update_dict["client_docket_no"]
     if "applicant_address" in update_dict:
         db_application.applicant_address = update_dict["applicant_address"]
     if "application_title" in update_dict:

@@ -221,6 +221,14 @@ def _run_postgres_migrations(conn) -> None:
             """
         )
     )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE application_data
+            ADD COLUMN IF NOT EXISTS client_docket_no VARCHAR;
+            """
+        )
+    )
 
     conn.execute(
         text(
@@ -482,6 +490,8 @@ def _run_sqlite_migrations(conn) -> None:
         conn.execute(text("ALTER TABLE application_data ADD COLUMN client_id INTEGER"))
     if not _sqlite_column_exists(conn, "application_data", "attorney_id"):
         conn.execute(text("ALTER TABLE application_data ADD COLUMN attorney_id INTEGER"))
+    if not _sqlite_column_exists(conn, "application_data", "client_docket_no"):
+        conn.execute(text("ALTER TABLE application_data ADD COLUMN client_docket_no TEXT"))
     if not _sqlite_column_exists(conn, "application_data", "created_date"):
         conn.execute(
             text("ALTER TABLE application_data ADD COLUMN created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
