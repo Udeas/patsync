@@ -6,8 +6,6 @@ from app.us_pto.models import UsptoTracker  # noqa: F401
 from app.auth.models import User  # noqa: F401
 from app.database import engine, run_schema_migrations
 from app.audit.listener import register_audit_listener
-
-register_audit_listener()
 from app.routers.health import router as health_router
 from app.routers.applications import router as applications_router
 from app.routers.status import router as status_router
@@ -17,6 +15,8 @@ from app.patents.router import router as patents_router
 from app.us_pto.router import router as us_pto_router
 from app.auth.router import router as auth_router
 from app.auth.deps import get_current_user
+
+register_audit_listener()
 
 app = FastAPI()
 
