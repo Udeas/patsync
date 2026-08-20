@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
+from app.audit.context import AuditActor
+from app.audit.service import write_audit
 from app.auth.deps import get_current_user, require_admin
 from app.auth.models import User
 from app.auth.schemas import LoginRequest, TokenResponse, UserCreate, UserOut
@@ -24,12 +26,32 @@ def _to_out(user: User) -> UserOut:
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, session: Session = Depends(get_session)):
+def login(body: LoginRequest, request: Request, session: Session = Depends(get_session)):
+    ip = request.client.host if request.client else None
     user = authenticate(session, body.username, body.password)
     if user is None:
+        write_audit(
+            session,
+            action="login_failed",
+            entity_type="user",
+            entity_label=body.username,
+            ip_address=ip,
+            actor=AuditActor(user_id=None, username=body.username),
+        )
+        session.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
         )
+    write_audit(
+        session,
+        action="login",
+        entity_type="user",
+        entity_id=user.id,
+        entity_label=user.username,
+        ip_address=ip,
+        actor=AuditActor(user_id=user.id, username=user.username),
+    )
+    session.commit()
     token = create_access_token(user.username)
     return TokenResponse(access_token=token, user=_to_out(user))
 
@@ -49,6 +71,14 @@ def create_user_endpoint(
         created = create_user(session, body)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    write_audit(
+        session,
+        action="user_create",
+        entity_type="user",
+        entity_id=created.id,
+        entity_label=created.username,
+    )
+    session.commit()
     return _to_out(created)
 
 
