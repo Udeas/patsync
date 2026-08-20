@@ -24,6 +24,8 @@ def get_current_user(
     user = get_user_by_username(session, username)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+    from app.audit.context import set_actor
+    set_actor(user.id, user.username)
     return user
 
 
