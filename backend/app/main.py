@@ -5,6 +5,9 @@ from app import models  # noqa: F401
 from app.us_pto.models import UsptoTracker  # noqa: F401
 from app.auth.models import User  # noqa: F401
 from app.database import engine, run_schema_migrations
+from app.audit.listener import register_audit_listener
+
+register_audit_listener()
 from app.routers.health import router as health_router
 from app.routers.applications import router as applications_router
 from app.routers.status import router as status_router
