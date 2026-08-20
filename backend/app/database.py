@@ -886,6 +886,51 @@ def _run_users_migration(conn, backend: str) -> None:
         )
 
 
+def _run_audit_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id SERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    actor_user_id INTEGER,
+                    actor_username VARCHAR(64),
+                    action VARCHAR(32) NOT NULL,
+                    entity_type VARCHAR(32),
+                    entity_id INTEGER,
+                    entity_label VARCHAR(255),
+                    changes TEXT,
+                    ip_address VARCHAR(64)
+                );
+                """
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    actor_user_id INTEGER,
+                    actor_username TEXT,
+                    action TEXT NOT NULL,
+                    entity_type TEXT,
+                    entity_id INTEGER,
+                    entity_label TEXT,
+                    changes TEXT,
+                    ip_address TEXT
+                );
+                """
+            )
+        )
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_created_at ON audit_log (created_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_actor_user_id ON audit_log (actor_user_id)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_entity_type ON audit_log (entity_type)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_action ON audit_log (action)"))
+
+
 def run_schema_migrations():
     backend = engine.url.get_backend_name()
     with engine.begin() as conn:
@@ -896,6 +941,7 @@ def run_schema_migrations():
         _run_patent_metadata_migrations(conn, backend)
         _run_uspto_tracker_migration(conn, backend)
         _run_users_migration(conn, backend)
+        _run_audit_migration(conn, backend)
         _seed_patent_statuses(conn, backend)
         _seed_tm_statuses(conn, backend)
 
