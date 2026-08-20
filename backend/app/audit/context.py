@@ -24,6 +24,10 @@ def get_actor() -> Optional[AuditActor]:
     return _current_actor.get()
 
 
+def reset_actor() -> None:
+    _current_actor.set(None)
+
+
 _MARKER_KEY = "_audit_explicit"
 
 

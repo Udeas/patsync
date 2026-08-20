@@ -1,11 +1,31 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 from app.audit.context import get_actor, mark_explicit
 from app.auth.models import AuditLog
+
+
+def _safe(value):
+    from datetime import date, datetime
+    from decimal import Decimal
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _coerce_changes(changes):
+    out = []
+    for c in changes or []:
+        out.append({k: _safe(v) for k, v in c.items()})
+    return out
 
 
 def write_audit(session, *, action: str, entity_type: Optional[str] = None,
@@ -20,8 +40,8 @@ def write_audit(session, *, action: str, entity_type: Optional[str] = None,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
-        entity_label=entity_label,
-        changes=json.dumps(changes or []),
+        entity_label=(entity_label[:255] if entity_label else entity_label),
+        changes=json.dumps(_coerce_changes(changes)),
         ip_address=ip_address,
     ))
 

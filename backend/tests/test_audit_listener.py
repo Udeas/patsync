@@ -93,3 +93,20 @@ def test_explicit_marker_suppresses_update() -> None:
         client.name = "Acme Corp"
         session.commit()
         assert [r for r in _audits(session) if r.action == "update"] == []
+
+
+def test_two_sequential_updates_capture_both_diffs() -> None:
+    with _session() as session:
+        client = PatentClient(client_code="AC", name="Acme")
+        session.add(client)
+        session.commit()
+        client.name = "Acme Corp"
+        session.commit()
+        client.name = "Acme Global"
+        session.commit()
+        updates = [r for r in _audits(session) if r.action == "update"]
+        assert len(updates) == 2
+        first = json.loads(updates[0].changes)
+        second = json.loads(updates[1].changes)
+        assert {"field": "name", "old": "Acme", "new": "Acme Corp"} in first
+        assert {"field": "name", "old": "Acme Corp", "new": "Acme Global"} in second

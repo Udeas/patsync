@@ -29,6 +29,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from starlette.requests import Request
+from app.audit.context import reset_actor
+
+
+@app.middleware("http")
+async def _reset_audit_actor(request: Request, call_next):
+    reset_actor()
+    return await call_next(request)
+
 app.include_router(health_router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 

@@ -37,7 +37,7 @@ def _coerce(value):
 
 
 def _label(obj, attr: str) -> str:
-    return str(getattr(obj, attr, None) or "")
+    return str(getattr(obj, attr, None) or "")[:255]
 
 
 def _identity(obj) -> Optional[int]:
