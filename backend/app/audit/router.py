@@ -30,6 +30,7 @@ def _to_read(row: AuditLog) -> AuditLogRead:
         entity_label=row.entity_label,
         changes=parsed,
         ip_address=row.ip_address,
+        user_agent=row.user_agent,
     )
 
 

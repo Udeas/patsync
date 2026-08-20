@@ -28,6 +28,34 @@ def reset_actor() -> None:
     _current_actor.set(None)
 
 
+_request_ip: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "audit_request_ip", default=None
+)
+_request_user_agent: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "audit_request_user_agent", default=None
+)
+
+
+def set_request_meta(ip: Optional[str], user_agent: Optional[str]) -> None:
+    _request_ip.set(ip)
+    _request_user_agent.set(user_agent)
+
+
+def get_request_ip() -> Optional[str]:
+    return _request_ip.get()
+
+
+def get_request_user_agent() -> Optional[str]:
+    return _request_user_agent.get()
+
+
+def reset_request_context() -> None:
+    """Reset all per-request audit context (actor + request metadata)."""
+    _current_actor.set(None)
+    _request_ip.set(None)
+    _request_user_agent.set(None)
+
+
 _MARKER_KEY = "_audit_explicit"
 
 

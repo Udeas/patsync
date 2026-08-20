@@ -30,12 +30,15 @@ app.add_middleware(
 )
 
 from starlette.requests import Request
-from app.audit.context import reset_actor
+from app.audit.context import reset_request_context, set_request_meta
 
 
 @app.middleware("http")
-async def _reset_audit_actor(request: Request, call_next):
-    reset_actor()
+async def _audit_request_context(request: Request, call_next):
+    reset_request_context()
+    forwarded = request.headers.get("x-forwarded-for")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else None)
+    set_request_meta(ip, request.headers.get("user-agent"))
     return await call_next(request)
 
 app.include_router(health_router, prefix="/api")

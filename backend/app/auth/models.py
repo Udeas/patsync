@@ -33,3 +33,4 @@ class AuditLog(SQLModel, table=True):
     entity_label: Optional[str] = Field(default=None, max_length=255)
     changes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     ip_address: Optional[str] = Field(default=None, max_length=64)
+    user_agent: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

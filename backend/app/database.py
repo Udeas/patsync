@@ -929,6 +929,12 @@ def _run_audit_migration(conn, backend: str) -> None:
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_actor_user_id ON audit_log (actor_user_id)"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_entity_type ON audit_log (entity_type)"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_action ON audit_log (action)"))
+    if backend == "postgresql":
+        if not _postgres_column_exists(conn, "audit_log", "user_agent"):
+            conn.execute(text("ALTER TABLE audit_log ADD COLUMN user_agent TEXT"))
+    else:
+        if not _sqlite_column_exists(conn, "audit_log", "user_agent"):
+            conn.execute(text("ALTER TABLE audit_log ADD COLUMN user_agent TEXT"))
 
 
 def run_schema_migrations():

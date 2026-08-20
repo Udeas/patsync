@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy import event, inspect
 from sqlmodel import Session
 
-from app.audit.context import get_actor, is_explicit
+from app.audit.context import get_actor, get_request_ip, get_request_user_agent, is_explicit
 from app.auth.models import AuditLog
 from app.models.applications import ApplicationData
 from app.models.trademark import TmApplicationData
@@ -129,6 +129,8 @@ def _after_flush(session, flush_context):
         return
     session.info["_audit_pending"] = []
     actor = get_actor()
+    ip = get_request_ip()
+    user_agent = get_request_user_agent()
     rows = []
     for p in pending:
         obj = p["obj"]
@@ -147,7 +149,8 @@ def _after_flush(session, flush_context):
             "entity_id": entity_id,
             "entity_label": label,
             "changes": json.dumps(p["changes"]),
-            "ip_address": None,
+            "ip_address": ip,
+            "user_agent": user_agent,
         })
     if rows:
         session.connection().execute(AuditLog.__table__.insert(), rows)

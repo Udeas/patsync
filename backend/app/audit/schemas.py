@@ -16,6 +16,7 @@ class AuditLogRead(BaseModel):
     entity_label: Optional[str] = None
     changes: List[Any] = []
     ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
 
 
 class AuditListResponse(BaseModel):
