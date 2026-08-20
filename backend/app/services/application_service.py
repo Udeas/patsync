@@ -29,6 +29,7 @@ from app.schemas.applications import (
     StatusRead,
 )
 from app.status_catalog import STATUS_ID_APPLICATION_FILED
+from app.audit.service import record_status_change
 
 
 def _utcnow() -> datetime:
@@ -450,6 +451,17 @@ def update_application_status(
     if not status_row:
         raise ValueError("invalid status_id")
 
+    # Capture previous status name BEFORE any new state row is added
+    old_status_name = None
+    prev = session.exec(
+        select(ApplicationState, Status)
+        .join(Status)
+        .where(ApplicationState.application_num == db_application.application_num)
+        .order_by(desc(ApplicationState.id))
+    ).first()
+    if prev is not None:
+        old_status_name = prev[1].status
+
     existing_filled = _filled_status_dates(session, db_application.application_num)
     validate_status_change(
         existing_filled,
@@ -480,6 +492,14 @@ def update_application_status(
         )
     session.add(db_state)
     _touch_last_status_updated(db_application, now)
+    record_status_change(
+        session,
+        entity_type="design",
+        entity_id=db_application.id,
+        entity_label=db_application.project_code,
+        old_status=old_status_name,
+        new_status=status_row.status,
+    )
     session.commit()
     return get_application_by_id(session, application_id)
 
