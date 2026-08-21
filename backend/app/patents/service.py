@@ -17,9 +17,11 @@ from .models import (
     PatentProject,
     PatentStatusEvent,
 )
-from .patent_status_catalog import STATUS_ID_APPLICATION_FILED
+from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, status_label
 from .reminders import compute_next_patent_action
 from .patent_status_catalog import ALL_STATUS_IDS
+from app.audit.service import record_status_change
+from app.audit.context import mark_explicit
 from .schemas import (
     PatentAgentInput,
     PatentAgentUpdate,
@@ -289,6 +291,7 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         "pct_wipo_filed_only": project.pct_wipo_filed_only,
         "is_archived": project.is_archived,
         "client_docket_no": project.client_docket_no,
+        "abandon_reason": project.abandon_reason,
         "current_status_id": current_status[0] if current_status else None,
         "current_status_date": current_status[1] if current_status else None,
         "due_action": due_action,
@@ -885,10 +888,19 @@ def update_project_detail(
     return _project_to_response(session, project)
 
 
-def update_status_event(session: Session, project_id: int, status_id: int, status_date) -> dict | None:
+def update_status_event(session: Session, project_id: int, status_id: int, status_date, abandon_reason: str | None = None) -> dict | None:
     project = session.get(PatentProject, project_id)
     if not project:
         return None
+
+    # Pre-mark explicit BEFORE any query that may auto-flush the dirty project
+    mark_explicit(session, "patent", project_id)
+
+    if status_id == STATUS_ID_ABANDONED:
+        reason = (abandon_reason or "").strip()
+        if not reason:
+            raise ValueError("Abandon reason is required.")
+        project.abandon_reason = reason
 
     events = session.exec(
         select(PatentStatusEvent).where(PatentStatusEvent.project_id == project_id)
@@ -916,6 +928,20 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
         session.add(existing)
     else:
         session.add(PatentStatusEvent(project_id=project_id, status_id=status_id, status_date=status_date))
+    old_status = derive_current_status({e.status_id: e.status_date for e in events})
+    old_label = status_label(old_status[0]) if old_status else None
+    extra = None
+    if status_id == STATUS_ID_ABANDONED and project.abandon_reason:
+        extra = [{"field": "abandon_reason", "old": None, "new": project.abandon_reason}]
+    record_status_change(
+        session,
+        entity_type="patent",
+        entity_id=project.id,
+        entity_label=project.docket_no,
+        old_status=old_label,
+        new_status=status_label(status_id),
+        extra_changes=extra,
+    )
     session.commit()
     return _project_to_response(session, project)
 
