@@ -47,6 +47,19 @@ PCT_APPLICATION_TYPES = frozenset(
     }
 )
 
+# Divisional-family applications are a child application distinct from the
+# parent they were carved out of. Their own IN application no/date do not
+# need to satisfy the usual year-match / priority-window date checks
+# against the parent's data, since those checks were already satisfied by
+# the parent application itself.
+DIVISIONAL_APPLICATION_TYPES = frozenset(
+    {
+        "Ordinary Divisional",
+        "Convention divisional",
+        "PCT National Phase Entry - Divisional",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ApplicationDetermination:
@@ -148,11 +161,26 @@ def validate_in_application_date_for_draft(in_application_date: date, current_da
         raise ValueError("For draft projects, IN filing date must match the current date")
 
 
+def validate_divisional_parent_application(payload: "PatentProjectCreate") -> None:
+    if payload.project_mode != "final":
+        return
+    application_type = (payload.application_type or "").strip()
+    if application_type not in DIVISIONAL_APPLICATION_TYPES:
+        return
+    if not payload.parent_application_no or not payload.parent_application_date:
+        raise ValueError(
+            "Parent application number and date are required for divisional Final Docket"
+        )
+
+
 def validate_create_project_filing_windows(payload: "PatentProjectCreate") -> None:
+    application_type = (payload.application_type or "").strip()
+    if application_type in DIVISIONAL_APPLICATION_TYPES:
+        return
+
     if payload.project_mode == "draft" or not payload.in_application_date:
         return
 
-    application_type = (payload.application_type or "").strip()
     in_date = payload.in_application_date
 
     if application_type in CONVENTION_APPLICATION_TYPES:

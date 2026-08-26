@@ -102,6 +102,9 @@ class PatentProjectCreate(SQLModel):
     pct_wipo_filed_only: bool = False
     international_application_no: Optional[str] = None
     international_application_date: Optional[date] = None
+    parent_project_id: Optional[int] = None
+    parent_application_no: Optional[str] = None
+    parent_application_date: Optional[date] = None
     inventors: list[PatentInventorInput] = Field(default_factory=list)
     priorities: list[PatentPriorityInput] = Field(default_factory=list)
     international_applications: list[PatentInternationalInput] = Field(default_factory=list)
@@ -137,6 +140,9 @@ class PatentProjectRead(SQLModel):
     application_type: Optional[str] = None
     provisional_kind: Optional[str] = None
     pct_wipo_filed_only: bool = False
+    parent_project_id: Optional[int] = None
+    parent_application_no: Optional[str] = None
+    parent_application_date: Optional[date] = None
     current_status_id: Optional[int] = None
     current_status_date: Optional[date] = None
     due_action: Optional[str] = None
@@ -185,6 +191,9 @@ class PatentProjectUpdate(SQLModel):
     client_id: Optional[int] = None
     provisional_kind: Optional[Literal["OP", "ONP"]] = None
     pct_wipo_filed_only: Optional[bool] = None
+    parent_project_id: Optional[int] = None
+    parent_application_no: Optional[str] = None
+    parent_application_date: Optional[date] = None
     inventors: Optional[list[PatentInventorInput]] = None
     priorities: Optional[list[PatentPriorityInput]] = None
     international_applications: Optional[list[PatentInternationalInput]] = None

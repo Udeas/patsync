@@ -34,7 +34,12 @@ from .schemas import (
     PatentProjectDetailUpdate,
     PatentProjectUpdate,
 )
-from .validators import parse_in_application_number, validate_create_project_filing_windows
+from .validators import (
+    DIVISIONAL_APPLICATION_TYPES,
+    parse_in_application_number,
+    validate_create_project_filing_windows,
+    validate_divisional_parent_application,
+)
 from .workflow import derive_current_status, validate_timeline_updates
 
 
@@ -289,6 +294,9 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         "application_type": project.application_type,
         "provisional_kind": project.provisional_kind,
         "pct_wipo_filed_only": project.pct_wipo_filed_only,
+        "parent_project_id": project.parent_project_id,
+        "parent_application_no": project.parent_application_no,
+        "parent_application_date": project.parent_application_date,
         "is_archived": project.is_archived,
         "client_docket_no": project.client_docket_no,
         "abandon_reason": project.abandon_reason,
@@ -391,9 +399,11 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
 
     if payload.in_application_no:
         parse_in_application_number(payload.in_application_no)
-    _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
+    if (payload.application_type or "").strip() not in DIVISIONAL_APPLICATION_TYPES:
+        _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
 
     validate_create_project_filing_windows(payload)
+    validate_divisional_parent_application(payload)
 
     source_applicants = payload.applicants
     if not source_applicants:
@@ -429,6 +439,9 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
         attorney_id=payload.attorney_id,
         client_id=payload.client_id,
         client_docket_no=payload.client_docket_no,
+        parent_project_id=payload.parent_project_id,
+        parent_application_no=payload.parent_application_no,
+        parent_application_date=payload.parent_application_date,
     )
     session.add(project)
     session.flush()
@@ -632,7 +645,9 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
         raise ValueError("IN application number is required for final projects")
     if payload.project_mode == "final" and not payload.in_application_date:
         raise ValueError("IN application date is required for final projects")
-    _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
+    effective_application_type = (payload.application_type or project.application_type or "").strip()
+    if effective_application_type not in DIVISIONAL_APPLICATION_TYPES:
+        _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
 
     existing_applicants = session.exec(
         select(PatentApplicant).where(PatentApplicant.project_id == project_id)
@@ -678,28 +693,31 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
         applicants=effective_applicants,
         inventors=effective_inventors,
     )
-    validate_create_project_filing_windows(
-        PatentProjectCreate(
-            project_mode=payload.project_mode or project.project_mode,
-            application_type=payload.application_type or project.application_type or "",
-            docket_no=payload.docket_no,
-            in_application_no=payload.in_application_no,
-            in_application_date=payload.in_application_date,
-            applicant_name=payload.applicant_name,
-            applicant_country=payload.applicant_country,
-            applicant_address=payload.applicant_address,
-            applicants=payload.applicants or [],
-            application_title=payload.application_title,
-            attorney_id=payload.attorney_id,
-            client_id=payload.client_id,
-            client_docket_no=payload.client_docket_no,
-            provisional_kind=payload.provisional_kind,
-            pct_wipo_filed_only=payload.pct_wipo_filed_only if payload.pct_wipo_filed_only is not None else project.pct_wipo_filed_only,
-            inventors=payload.inventors or [],
-            priorities=effective_priorities,
-            international_applications=effective_international,
-        )
+    effective_validation_payload = PatentProjectCreate(
+        project_mode=payload.project_mode or project.project_mode,
+        application_type=payload.application_type or project.application_type or "",
+        docket_no=payload.docket_no,
+        in_application_no=payload.in_application_no,
+        in_application_date=payload.in_application_date,
+        applicant_name=payload.applicant_name,
+        applicant_country=payload.applicant_country,
+        applicant_address=payload.applicant_address,
+        applicants=payload.applicants or [],
+        application_title=payload.application_title,
+        attorney_id=payload.attorney_id,
+        client_id=payload.client_id,
+        client_docket_no=payload.client_docket_no,
+        provisional_kind=payload.provisional_kind,
+        pct_wipo_filed_only=payload.pct_wipo_filed_only if payload.pct_wipo_filed_only is not None else project.pct_wipo_filed_only,
+        inventors=payload.inventors or [],
+        priorities=effective_priorities,
+        international_applications=effective_international,
+        parent_project_id=payload.parent_project_id if payload.parent_project_id is not None else project.parent_project_id,
+        parent_application_no=payload.parent_application_no if payload.parent_application_no is not None else project.parent_application_no,
+        parent_application_date=payload.parent_application_date if payload.parent_application_date is not None else project.parent_application_date,
     )
+    validate_create_project_filing_windows(effective_validation_payload)
+    validate_divisional_parent_application(effective_validation_payload)
 
     project.docket_no = payload.docket_no
     if payload.project_mode:
@@ -718,6 +736,12 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
         project.provisional_kind = payload.provisional_kind
     if payload.pct_wipo_filed_only is not None:
         project.pct_wipo_filed_only = payload.pct_wipo_filed_only
+    if payload.parent_project_id is not None:
+        project.parent_project_id = payload.parent_project_id
+    if payload.parent_application_no is not None:
+        project.parent_application_no = payload.parent_application_no
+    if payload.parent_application_date is not None:
+        project.parent_application_date = payload.parent_application_date
 
     if payload.applicants is not None:
         existing_applicants = session.exec(

@@ -24,6 +24,8 @@ from app.patents.validators import (
 
     validate_create_project_filing_windows,
 
+    validate_divisional_parent_application,
+
     validate_in_application_date_for_draft,
 
     validate_in_within_months_of_anchor,
@@ -461,5 +463,92 @@ def test_validate_in_application_date_draft_requires_current_date():
             current_date=date(2026, 5, 2),
 
         )
+
+
+@pytest.mark.parametrize(
+    "application_type",
+    ["Ordinary Divisional", "Convention divisional", "PCT National Phase Entry - Divisional"],
+)
+def test_divisional_types_skip_filing_window_and_priority_requirement(application_type: str):
+    # No priority rows, no international rows, IN date far outside any window -
+    # would raise for non-divisional Convention/PCT types, but must pass here.
+    validate_create_project_filing_windows(
+        PatentProjectCreate(
+            project_mode="final",
+            application_type=application_type,
+            docket_no="DIV-1",
+            in_application_date=date(2026, 6, 1),
+            applicant_name="Test",
+            priorities=[],
+            international_applications=[],
+        )
+    )
+
+
+def test_non_divisional_types_still_enforce_filing_window():
+    with pytest.raises(ValueError, match="conventional priority"):
+        validate_create_project_filing_windows(
+            PatentProjectCreate(
+                project_mode="final",
+                application_type="Convention",
+                docket_no="NONDIV-1",
+                in_application_date=date(2026, 6, 1),
+                applicant_name="Test",
+                priorities=[],
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "application_type",
+    ["Ordinary Divisional", "Convention divisional", "PCT National Phase Entry - Divisional"],
+)
+def test_divisional_final_docket_requires_parent_application_data(application_type: str):
+    with pytest.raises(ValueError, match="Parent application"):
+        validate_divisional_parent_application(
+            PatentProjectCreate(
+                project_mode="final",
+                application_type=application_type,
+                docket_no="DIV-2",
+                applicant_name="Test",
+                parent_application_no=None,
+                parent_application_date=None,
+            )
+        )
+
+
+def test_divisional_final_docket_accepts_when_parent_application_data_present():
+    validate_divisional_parent_application(
+        PatentProjectCreate(
+            project_mode="final",
+            application_type="Ordinary Divisional",
+            docket_no="DIV-3",
+            applicant_name="Test",
+            parent_application_no="202312000001",
+            parent_application_date=date(2023, 1, 1),
+        )
+    )
+
+
+def test_divisional_draft_docket_does_not_require_parent_application_data():
+    validate_divisional_parent_application(
+        PatentProjectCreate(
+            project_mode="draft",
+            application_type="Ordinary Divisional",
+            docket_no="DIV-4",
+            applicant_name="Test",
+        )
+    )
+
+
+def test_non_divisional_final_docket_not_subject_to_parent_application_requirement():
+    validate_divisional_parent_application(
+        PatentProjectCreate(
+            project_mode="final",
+            application_type="Convention",
+            docket_no="NONDIV-2",
+            applicant_name="Test",
+        )
+    )
 
 

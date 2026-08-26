@@ -26,6 +26,9 @@ class PatentProject(SQLModel, table=True):
     abandon_reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     application_type: Optional[str] = Field(default=None)
     provisional_kind: Optional[str] = Field(default=None, max_length=3)
+    parent_project_id: Optional[int] = Field(default=None, foreign_key="patent_project.id")
+    parent_application_no: Optional[str] = Field(default=None)
+    parent_application_date: Optional[date] = Field(default=None)
     pct_wipo_filed_only: bool = Field(default=False)
     is_archived: bool = Field(default=False, nullable=False, index=True)
     created_date: datetime = Field(
