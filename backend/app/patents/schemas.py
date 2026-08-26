@@ -145,6 +145,7 @@ class PatentProjectRead(SQLModel):
     parent_application_date: Optional[date] = None
     parent_docket_no: Optional[str] = None
     parent_client_docket_no: Optional[str] = None
+    parent_priority_dates: list[date] = Field(default_factory=list)
     current_status_id: Optional[int] = None
     current_status_date: Optional[date] = None
     due_action: Optional[str] = None

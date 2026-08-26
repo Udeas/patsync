@@ -131,6 +131,22 @@ def compute_rfe_deadline(
     return _add_months(anchor, months)
 
 
+def compute_divisional_rfe_deadline(
+    divisional_in_application_date: date,
+    parent_application_date: date,
+    parent_priority_dates: Sequence[date] = (),
+) -> date:
+    """RFE deadline for a divisional application (Rule 24B, Rule 13(2A)).
+
+    Later of: 31/48 months (per the usual rule-change cutoff) from the
+    filing/priority date of the first-mentioned (parent) application, OR
+    6 months from the divisional's own filing date.
+    """
+    parent_deadline = compute_rfe_deadline(parent_application_date, parent_priority_dates)
+    own_deadline = _add_months(divisional_in_application_date, 6)
+    return max(parent_deadline, own_deadline)
+
+
 def _validate_request_for_examination(
 
     rfe_date: date,
@@ -139,6 +155,11 @@ def _validate_request_for_examination(
 
     priority_dates: Sequence[date],
 
+    *,
+    is_divisional: bool = False,
+    parent_application_date: date | None = None,
+    parent_priority_dates: Sequence[date] = (),
+
 ) -> None:
 
     if rfe_date < in_application_date:
@@ -146,6 +167,18 @@ def _validate_request_for_examination(
         raise ValueError("Request for Examination date must be on or after IN application filing date")
 
 
+
+    if is_divisional and parent_application_date:
+        deadline = compute_divisional_rfe_deadline(
+            in_application_date, parent_application_date, parent_priority_dates
+        )
+        if rfe_date > deadline:
+            raise ValueError(
+                "Request for Examination date must be within 31/48 months (per rule-change date) of "
+                "the parent application's filing/priority date, or 6 months of the divisional's own "
+                "filing date, whichever is later"
+            )
+        return
 
     deadline = compute_rfe_deadline(in_application_date, priority_dates)
 
@@ -279,6 +312,11 @@ def validate_timeline_updates(
 
     priority_dates: Sequence[date] | None = None,
 
+    *,
+    is_divisional: bool = False,
+    parent_application_date: date | None = None,
+    parent_priority_dates: Sequence[date] = (),
+
 ) -> None:
 
     filled: dict[int, date] = {}
@@ -368,6 +406,10 @@ def validate_timeline_updates(
             filing_date,
 
             priority_dates or (),
+
+            is_divisional=is_divisional,
+            parent_application_date=parent_application_date,
+            parent_priority_dates=parent_priority_dates,
 
         )
 

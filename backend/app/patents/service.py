@@ -177,6 +177,7 @@ def _build_relations_dict(
     client,
     parent_docket_no=None,
     parent_client_docket_no=None,
+    parent_priority_dates=(),
 ) -> dict:
     return {
         "applicants": [
@@ -212,6 +213,7 @@ def _build_relations_dict(
         "parent_docket_no": parent_docket_no,
         "parent_client_docket_no": parent_client_docket_no,
         "_status_events_raw": status_events,
+        "_parent_priority_dates_raw": list(parent_priority_dates),
     }
 
 
@@ -258,11 +260,13 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
 
     parent_docket_no = None
     parent_client_docket_no = None
+    parent_priority_dates: list = []
     if project.parent_project_id:
         parent = session.get(PatentProject, project.parent_project_id)
         if parent:
             parent_docket_no = parent.docket_no
             parent_client_docket_no = parent.client_docket_no
+            parent_priority_dates = _parent_priority_dates(session, project)
 
     return _build_relations_dict(
         applicants=applicants,
@@ -274,12 +278,14 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         client=client,
         parent_docket_no=parent_docket_no,
         parent_client_docket_no=parent_client_docket_no,
+        parent_priority_dates=parent_priority_dates,
     )
 
 
 def _assemble_response(project: PatentProject, relations: dict) -> dict:
     relations = dict(relations)
     status_events_raw = relations.pop("_status_events_raw")
+    parent_priority_dates_raw = relations.pop("_parent_priority_dates_raw", [])
     filled_status = {event.status_id: event.status_date for event in status_events_raw}
     current_status = derive_current_status(filled_status)
     priority_dates = [
@@ -291,6 +297,9 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         in_application_date=project.in_application_date,
         priority_dates=priority_dates,
         provisional_kind=project.provisional_kind,
+        application_type=project.application_type,
+        parent_application_date=project.parent_application_date,
+        parent_priority_dates=parent_priority_dates_raw,
     )
     due_action = next_action.message if next_action else None
     action_due_date = next_action.due_date if next_action else None
@@ -311,6 +320,7 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         "parent_project_id": project.parent_project_id,
         "parent_application_no": project.parent_application_no,
         "parent_application_date": project.parent_application_date,
+        "parent_priority_dates": parent_priority_dates_raw,
         "is_archived": project.is_archived,
         "client_docket_no": project.client_docket_no,
         "abandon_reason": project.abandon_reason,
@@ -324,6 +334,17 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
 
 def _project_to_response(session: Session, project: PatentProject) -> dict:
     return _assemble_response(project, _load_project_relations(session, project))
+
+
+def _parent_priority_dates(session: Session, project: PatentProject) -> list:
+    if not project.parent_project_id:
+        return []
+    return [
+        p.priority_application_date
+        for p in session.exec(
+            select(PatentPriority).where(PatentPriority.project_id == project.parent_project_id)
+        ).all()
+    ]
 
 
 def _validate_in_number_date_year_match(in_application_no: str | None, in_application_date) -> None:
@@ -561,6 +582,14 @@ def _load_relations_bulk(
         ).all():
             parents_by_id[parent.id] = parent
 
+    parent_priorities_by = _grouped(
+        session.exec(
+            select(PatentPriority).where(PatentPriority.project_id.in_(parent_ids))
+        ).all()
+        if parent_ids
+        else []
+    )
+
     attorney_ids = {project.attorney_id for project in projects if project.attorney_id}
     agents_by_id: dict[int, dict | None] = {}
     if attorney_ids:
@@ -590,6 +619,11 @@ def _load_relations_bulk(
             client=clients_by_id.get(project.client_id) if project.client_id else None,
             parent_docket_no=parent.docket_no if parent else None,
             parent_client_docket_no=parent.client_docket_no if parent else None,
+            parent_priority_dates=(
+                [p.priority_application_date for p in parent_priorities_by.get(parent.id, [])]
+                if parent
+                else []
+            ),
         )
     return relations_by_project
 
@@ -902,6 +936,9 @@ def update_project_detail(
         requires_non_provisional=project.provisional_kind == "OP",
         in_application_date=project.in_application_date,
         priority_dates=[p.priority_application_date for p in priorities],
+        is_divisional=(project.application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES,
+        parent_application_date=project.parent_application_date,
+        parent_priority_dates=_parent_priority_dates(session, project),
     )
 
     existing_events = session.exec(
@@ -964,6 +1001,9 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
         requires_non_provisional=project.provisional_kind == "OP",
         in_application_date=project.in_application_date,
         priority_dates=[p.priority_application_date for p in priorities],
+        is_divisional=(project.application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES,
+        parent_application_date=project.parent_application_date,
+        parent_priority_dates=_parent_priority_dates(session, project),
     )
 
     existing = session.exec(

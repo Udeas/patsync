@@ -11,7 +11,7 @@ from app.patents.patent_status_catalog import (
     STATUS_ID_REQUEST_FOR_EXAMINATION,
 )
 from app.patents.reminders import compute_next_patent_action
-from app.patents.workflow import compute_rfe_deadline
+from app.patents.workflow import compute_divisional_rfe_deadline, compute_rfe_deadline
 
 
 def test_rfe_due_when_filed_without_rfe():
@@ -167,4 +167,50 @@ def test_provisional_after_non_provisional_uses_existing_rfe_flow():
     assert action is not None
     assert action.message == "Request for Examination"
     assert action.due_date == compute_rfe_deadline(non_provisional_date)
+
+
+def test_divisional_rfe_uses_divisional_formula_when_parent_date_present():
+    divisional_filing = date(2026, 1, 1)
+    parent_date = date(2024, 6, 1)
+    action = compute_next_patent_action(
+        filled={STATUS_ID_APPLICATION_FILED: divisional_filing},
+        current_status_id=STATUS_ID_APPLICATION_FILED,
+        in_application_date=divisional_filing,
+        application_type="Ordinary Divisional",
+        parent_application_date=parent_date,
+    )
+    assert action is not None
+    assert action.message == "Request for Examination"
+    assert action.due_date == compute_divisional_rfe_deadline(divisional_filing, parent_date)
+    # sanity: divisional formula must differ from the plain (non-divisional)
+    # formula that only looks at the divisional's own filing date.
+    assert action.due_date != compute_rfe_deadline(divisional_filing)
+
+
+def test_divisional_rfe_falls_back_to_plain_formula_without_parent_date():
+    # Legacy divisional docket created before parent data was tracked.
+    in_date = date(2026, 1, 1)
+    action = compute_next_patent_action(
+        filled={STATUS_ID_APPLICATION_FILED: in_date},
+        current_status_id=STATUS_ID_APPLICATION_FILED,
+        in_application_date=in_date,
+        application_type="Ordinary Divisional",
+        parent_application_date=None,
+    )
+    assert action is not None
+    assert action.due_date == compute_rfe_deadline(in_date)
+
+
+def test_non_divisional_type_ignores_parent_application_date():
+    in_date = date(2026, 1, 1)
+    parent_date = date(2024, 6, 1)
+    action = compute_next_patent_action(
+        filled={STATUS_ID_APPLICATION_FILED: in_date},
+        current_status_id=STATUS_ID_APPLICATION_FILED,
+        in_application_date=in_date,
+        application_type="Convention",
+        parent_application_date=parent_date,
+    )
+    assert action is not None
+    assert action.due_date == compute_rfe_deadline(in_date)
 

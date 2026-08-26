@@ -30,6 +30,8 @@ from app.patents.patent_status_catalog import (
 
 from app.patents.workflow import (
 
+    compute_divisional_rfe_deadline,
+
     compute_rfe_deadline,
 
     derive_current_status,
@@ -400,5 +402,86 @@ def test_rfe_within_48_months_for_pre_amendment_filing():
             requires_non_provisional=False,
             in_application_date=date(2023, 1, 1),
         )
+
+
+def test_timeline_rfe_uses_divisional_formula_when_flagged():
+    divisional_filing = date(2026, 1, 1)
+    parent_date = date(2018, 1, 1)  # pre-amendment -> 48 months -> 2022-01-01
+    own_deadline = date(2026, 7, 1)  # 6 months after divisional filing - later, wins
+
+    # Beyond the plain (non-divisional) formula's deadline for this filing
+    # date, but within the divisional's own 6-month floor - must pass.
+    validate_timeline_updates(
+        [
+            (STATUS_ID_APPLICATION_FILED, divisional_filing),
+            (STATUS_ID_REQUEST_FOR_EXAMINATION, own_deadline),
+        ],
+        requires_non_provisional=False,
+        in_application_date=divisional_filing,
+        is_divisional=True,
+        parent_application_date=parent_date,
+    )
+
+    with pytest.raises(ValueError, match="parent application"):
+        validate_timeline_updates(
+            [
+                (STATUS_ID_APPLICATION_FILED, divisional_filing),
+                (STATUS_ID_REQUEST_FOR_EXAMINATION, date(2026, 7, 2)),
+            ],
+            requires_non_provisional=False,
+            in_application_date=divisional_filing,
+            is_divisional=True,
+            parent_application_date=parent_date,
+        )
+
+
+def test_timeline_rfe_divisional_flag_without_parent_date_falls_back_to_plain_formula():
+    in_date = date(2026, 1, 1)
+    with pytest.raises(ValueError, match="31 months"):
+        validate_timeline_updates(
+            [
+                (STATUS_ID_APPLICATION_FILED, in_date),
+                (STATUS_ID_REQUEST_FOR_EXAMINATION, date(2028, 9, 1)),
+            ],
+            requires_non_provisional=False,
+            in_application_date=in_date,
+            is_divisional=True,
+            parent_application_date=None,
+        )
+
+
+def test_divisional_rfe_uses_parent_deadline_when_it_is_later():
+    # Parent's own 31-month deadline lands well after divisional's
+    # 6-month-from-own-filing deadline -> parent deadline wins.
+    parent_date = date(2024, 6, 1)  # on/after rule change -> 31 months
+    divisional_filing = date(2026, 1, 1)
+    parent_deadline = compute_rfe_deadline(parent_date)  # 2027-01-01
+    own_deadline = date(2026, 7, 1)  # 6 months after divisional filing
+    assert parent_deadline > own_deadline
+    assert compute_divisional_rfe_deadline(divisional_filing, parent_date) == parent_deadline
+
+
+def test_divisional_rfe_uses_own_6_month_deadline_when_it_is_later():
+    # Parent filed long ago, its 31/48-month deadline already lapsed relative
+    # to now, but the divisional is freshly filed -> its own 6-month floor
+    # from its own filing date wins.
+    parent_date = date(2018, 1, 1)  # pre-amendment -> 48 months -> 2022-01-01
+    divisional_filing = date(2026, 1, 1)
+    own_deadline = date(2026, 7, 1)
+    assert own_deadline > compute_rfe_deadline(parent_date)
+    assert compute_divisional_rfe_deadline(divisional_filing, parent_date) == own_deadline
+
+
+def test_divisional_rfe_parent_anchor_uses_parents_earliest_priority_date():
+    # Parent itself claimed an earlier convention priority - that earlier
+    # date is the true anchor for the parent's 31/48-month window.
+    parent_date = date(2024, 6, 1)  # on/after rule change -> 31 months
+    parent_priority = date(2023, 1, 1)
+    divisional_filing = date(2024, 7, 1)  # own 6-month floor stays well below
+    expected_parent_deadline = compute_rfe_deadline(parent_date, [parent_priority])
+    assert compute_divisional_rfe_deadline(
+        divisional_filing, parent_date, [parent_priority]
+    ) == expected_parent_deadline
+    assert expected_parent_deadline < compute_rfe_deadline(parent_date)
 
 

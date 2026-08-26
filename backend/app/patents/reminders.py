@@ -14,7 +14,8 @@ from .patent_status_catalog import (
     STATUS_ID_REQUEST_FOR_EXAMINATION,
     TERMINAL_STATUS_IDS,
 )
-from .workflow import compute_rfe_deadline
+from .validators import DIVISIONAL_APPLICATION_TYPES
+from .workflow import compute_divisional_rfe_deadline, compute_rfe_deadline
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,9 @@ def compute_next_patent_action(
     in_application_date: date | None,
     priority_dates: Sequence[date] = (),
     provisional_kind: str | None = None,
+    application_type: str | None = None,
+    parent_application_date: date | None = None,
+    parent_priority_dates: Sequence[date] = (),
 ) -> NextPatentAction | None:
     if current_status_id is not None and current_status_id in TERMINAL_STATUS_IDS:
         return None
@@ -76,9 +80,16 @@ def compute_next_patent_action(
         if provisional_kind == "OP":
             filing_date = filled.get(STATUS_ID_NON_PROVISIONAL_APPLICATION) or filing_date
         if filing_date:
+            is_divisional = (application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES
+            if is_divisional and parent_application_date:
+                deadline = compute_divisional_rfe_deadline(
+                    filing_date, parent_application_date, parent_priority_dates
+                )
+            else:
+                deadline = compute_rfe_deadline(filing_date, priority_dates)
             return NextPatentAction(
                 message="Request for Examination",
-                due_date=compute_rfe_deadline(filing_date, priority_dates),
+                due_date=deadline,
             )
 
     return None
