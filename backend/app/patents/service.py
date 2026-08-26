@@ -175,6 +175,8 @@ def _build_relations_dict(
     status_events,
     attorney,
     client,
+    parent_client_code=None,
+    parent_attorney_code=None,
 ) -> dict:
     return {
         "applicants": [
@@ -207,6 +209,8 @@ def _build_relations_dict(
         ],
         "attorney": attorney,
         "client": client,
+        "parent_client_code": parent_client_code,
+        "parent_attorney_code": parent_attorney_code,
         "_status_events_raw": status_events,
     }
 
@@ -252,6 +256,18 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         else None
     )
 
+    parent_client_code = None
+    parent_attorney_code = None
+    if project.parent_project_id:
+        parent = session.get(PatentProject, project.parent_project_id)
+        if parent:
+            if parent.client_id:
+                parent_client = session.get(PatentClient, parent.client_id)
+                parent_client_code = parent_client.client_code if parent_client else None
+            if parent.attorney_id:
+                parent_agent = session.get(PatentAgent, parent.attorney_id)
+                parent_attorney_code = parent_agent.agent_code if parent_agent else None
+
     return _build_relations_dict(
         applicants=applicants,
         inventors=inventors,
@@ -260,6 +276,8 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         status_events=status_events,
         attorney=attorney,
         client=client,
+        parent_client_code=parent_client_code,
+        parent_attorney_code=parent_attorney_code,
     )
 
 
@@ -539,7 +557,16 @@ def _load_relations_bulk(
         ).all()
     )
 
+    parent_ids = {project.parent_project_id for project in projects if project.parent_project_id}
+    parents_by_id: dict[int, PatentProject] = {}
+    if parent_ids:
+        for parent in session.exec(
+            select(PatentProject).where(PatentProject.id.in_(parent_ids))
+        ).all():
+            parents_by_id[parent.id] = parent
+
     attorney_ids = {project.attorney_id for project in projects if project.attorney_id}
+    attorney_ids |= {parent.attorney_id for parent in parents_by_id.values() if parent.attorney_id}
     agents_by_id: dict[int, dict | None] = {}
     if attorney_ids:
         for agent in session.exec(
@@ -548,6 +575,7 @@ def _load_relations_bulk(
             agents_by_id[agent.id] = _agent_to_dict(agent)
 
     client_ids = {project.client_id for project in projects if project.client_id}
+    client_ids |= {parent.client_id for parent in parents_by_id.values() if parent.client_id}
     clients_by_id: dict[int, dict | None] = {}
     if client_ids:
         for patent_client in session.exec(
@@ -557,6 +585,9 @@ def _load_relations_bulk(
 
     relations_by_project: dict[int, dict] = {}
     for project in projects:
+        parent = parents_by_id.get(project.parent_project_id) if project.parent_project_id else None
+        parent_client = clients_by_id.get(parent.client_id) if parent and parent.client_id else None
+        parent_agent = agents_by_id.get(parent.attorney_id) if parent and parent.attorney_id else None
         relations_by_project[project.id] = _build_relations_dict(
             applicants=applicants_by.get(project.id, []),
             inventors=inventors_by.get(project.id, []),
@@ -565,6 +596,8 @@ def _load_relations_bulk(
             status_events=status_events_by.get(project.id, []),
             attorney=agents_by_id.get(project.attorney_id) if project.attorney_id else None,
             client=clients_by_id.get(project.client_id) if project.client_id else None,
+            parent_client_code=parent_client.get("client_code") if parent_client else None,
+            parent_attorney_code=parent_agent.get("agent_code") if parent_agent else None,
         )
     return relations_by_project
 

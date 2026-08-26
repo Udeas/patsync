@@ -3,13 +3,14 @@ from datetime import date
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
+from app.patents.models import PatentAgent, PatentClient
 from app.patents.schemas import (
     PatentApplicantInput,
     PatentInventorInput,
     PatentProjectCreate,
     PatentProjectUpdate,
 )
-from app.patents.service import create_project, update_project
+from app.patents.service import create_project, get_project, list_projects, update_project
 
 
 def _make_session() -> Session:
@@ -132,3 +133,54 @@ def test_update_divisional_project_persists_and_skips_year_match() -> None:
     assert updated["in_application_no"] == "201812000009"
     assert updated["parent_application_no"] == "201911000001"
     assert str(updated["parent_application_date"]) == "2019-11-01"
+
+
+def test_parent_client_and_attorney_codes_resolved_on_single_get() -> None:
+    with _make_session() as session:
+        parent_client = PatentClient(client_code="PARC", name="Parent Client")
+        parent_agent = PatentAgent(
+            name="Parent Attorney", agent_code="PA01", mobile_1="+91-0000000000", email_1="p@example.com"
+        )
+        session.add(parent_client)
+        session.add(parent_agent)
+        session.commit()
+        session.refresh(parent_client)
+        session.refresh(parent_agent)
+
+        parent = create_project(
+            session,
+            PatentProjectCreate(
+                project_mode="draft",
+                application_type="Convention",
+                docket_no="PARENT-DOCKET-1",
+                in_application_no="201911000001",
+                in_application_date=date(2019, 11, 1),
+                applicant_name="Acme Corp",
+                applicant_country="IN",
+                applicant_address="Somewhere",
+                client_id=parent_client.id,
+                attorney_id=parent_agent.id,
+            ),
+        )
+
+        child = create_project(
+            session,
+            PatentProjectCreate(
+                application_type="Ordinary Divisional",
+                in_application_no="202412000001",
+                in_application_date=date(2024, 1, 20),
+                parent_project_id=parent["id"],
+                parent_application_no="201911000001",
+                parent_application_date=date(2019, 11, 1),
+                **_final_docket_kwargs(docket_no="CHILD-DOCKET-1"),
+            ),
+        )
+
+        fetched = get_project(session, child["id"])
+        assert fetched is not None
+        assert fetched["parent_client_code"] == "PARC"
+        assert fetched["parent_attorney_code"] == "PA01"
+
+        listed = {row["id"]: row for row in list_projects(session)}
+        assert listed[child["id"]]["parent_client_code"] == "PARC"
+        assert listed[child["id"]]["parent_attorney_code"] == "PA01"
