@@ -156,9 +156,12 @@ def test_provisional_due_shows_non_provisional_in_12_months():
     assert action.due_date == date(2027, 1, 15)
 
 
-def test_provisional_after_non_provisional_uses_existing_rfe_flow():
-    in_date = date(2026, 1, 15)
-    non_provisional_date = date(2026, 12, 1)
+def test_provisional_after_non_provisional_anchors_rfe_on_provisional_date_not_conversion_date():
+    # The provisional's own filing date acts as its priority date for RFE
+    # purposes - the Non-Provisional/complete-specification date is a
+    # separate 12-month deadline and must not replace the RFE anchor.
+    in_date = date(2022, 9, 21)
+    non_provisional_date = date(2023, 9, 20)
     action = compute_next_patent_action(
         filled={
             STATUS_ID_APPLICATION_FILED: in_date,
@@ -170,7 +173,8 @@ def test_provisional_after_non_provisional_uses_existing_rfe_flow():
     )
     assert action is not None
     assert action.message == "Request for Examination"
-    assert action.due_date == compute_rfe_deadline(non_provisional_date)
+    assert action.due_date == compute_rfe_deadline(in_date)
+    assert action.due_date != compute_rfe_deadline(non_provisional_date)
 
 
 def test_divisional_rfe_uses_divisional_formula_when_parent_date_present():
