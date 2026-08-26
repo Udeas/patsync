@@ -3,7 +3,6 @@ from datetime import date
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.patents.models import PatentAgent, PatentClient
 from app.patents.schemas import (
     PatentApplicantInput,
     PatentInventorInput,
@@ -135,31 +134,20 @@ def test_update_divisional_project_persists_and_skips_year_match() -> None:
     assert str(updated["parent_application_date"]) == "2019-11-01"
 
 
-def test_parent_client_and_attorney_codes_resolved_on_single_get() -> None:
+def test_parent_docket_no_and_client_docket_no_resolved_on_single_get() -> None:
     with _make_session() as session:
-        parent_client = PatentClient(client_code="PARC", name="Parent Client")
-        parent_agent = PatentAgent(
-            name="Parent Attorney", agent_code="PA01", mobile_1="+91-0000000000", email_1="p@example.com"
-        )
-        session.add(parent_client)
-        session.add(parent_agent)
-        session.commit()
-        session.refresh(parent_client)
-        session.refresh(parent_agent)
-
         parent = create_project(
             session,
             PatentProjectCreate(
                 project_mode="draft",
                 application_type="Convention",
                 docket_no="PARENT-DOCKET-1",
+                client_docket_no="PARENT-CLIENT-DKT-1",
                 in_application_no="201911000001",
                 in_application_date=date(2019, 11, 1),
                 applicant_name="Acme Corp",
                 applicant_country="IN",
                 applicant_address="Somewhere",
-                client_id=parent_client.id,
-                attorney_id=parent_agent.id,
             ),
         )
 
@@ -178,9 +166,9 @@ def test_parent_client_and_attorney_codes_resolved_on_single_get() -> None:
 
         fetched = get_project(session, child["id"])
         assert fetched is not None
-        assert fetched["parent_client_code"] == "PARC"
-        assert fetched["parent_attorney_code"] == "PA01"
+        assert fetched["parent_docket_no"] == "PARENT-DOCKET-1"
+        assert fetched["parent_client_docket_no"] == "PARENT-CLIENT-DKT-1"
 
         listed = {row["id"]: row for row in list_projects(session)}
-        assert listed[child["id"]]["parent_client_code"] == "PARC"
-        assert listed[child["id"]]["parent_attorney_code"] == "PA01"
+        assert listed[child["id"]]["parent_docket_no"] == "PARENT-DOCKET-1"
+        assert listed[child["id"]]["parent_client_docket_no"] == "PARENT-CLIENT-DKT-1"
