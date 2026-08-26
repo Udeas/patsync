@@ -36,6 +36,7 @@ from .schemas import (
 )
 from .validators import (
     DIVISIONAL_APPLICATION_TYPES,
+    PATENT_OF_ADDITION_APPLICATION_TYPES,
     parse_in_application_number,
     validate_create_project_filing_windows,
     validate_divisional_parent_application,
@@ -937,6 +938,7 @@ def update_project_detail(
         in_application_date=project.in_application_date,
         priority_dates=[p.priority_application_date for p in priorities],
         is_divisional=(project.application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES,
+        is_patent_of_addition=(project.application_type or "").strip() in PATENT_OF_ADDITION_APPLICATION_TYPES,
         parent_application_date=project.parent_application_date,
         parent_priority_dates=_parent_priority_dates(session, project),
     )
@@ -1002,6 +1004,7 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
         in_application_date=project.in_application_date,
         priority_dates=[p.priority_application_date for p in priorities],
         is_divisional=(project.application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES,
+        is_patent_of_addition=(project.application_type or "").strip() in PATENT_OF_ADDITION_APPLICATION_TYPES,
         parent_application_date=project.parent_application_date,
         parent_priority_dates=_parent_priority_dates(session, project),
     )

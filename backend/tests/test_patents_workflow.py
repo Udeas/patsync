@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 
 
@@ -31,6 +31,8 @@ from app.patents.patent_status_catalog import (
 from app.patents.workflow import (
 
     compute_divisional_rfe_deadline,
+
+    compute_patent_of_addition_rfe_deadline,
 
     compute_rfe_deadline,
 
@@ -450,6 +452,64 @@ def test_timeline_rfe_divisional_flag_without_parent_date_falls_back_to_plain_fo
         )
 
 
+def test_timeline_rfe_uses_patent_of_addition_formula_when_flagged():
+    own_filing = date(2026, 1, 1)
+    parent_date = date(2025, 6, 1)  # post-amendment -> 31 months -> 2027-12-01
+    parent_deadline = compute_rfe_deadline(parent_date)
+
+    # Parent's own filing/priority date governs, not own_filing +/- anything.
+    validate_timeline_updates(
+        [
+            (STATUS_ID_APPLICATION_FILED, own_filing),
+            (STATUS_ID_REQUEST_FOR_EXAMINATION, parent_deadline),
+        ],
+        requires_non_provisional=False,
+        in_application_date=own_filing,
+        is_patent_of_addition=True,
+        parent_application_date=parent_date,
+    )
+
+    with pytest.raises(ValueError, match="Patent of Addition"):
+        validate_timeline_updates(
+            [
+                (STATUS_ID_APPLICATION_FILED, own_filing),
+                (STATUS_ID_REQUEST_FOR_EXAMINATION, parent_deadline + timedelta(days=1)),
+            ],
+            requires_non_provisional=False,
+            in_application_date=own_filing,
+            is_patent_of_addition=True,
+            parent_application_date=parent_date,
+        )
+
+
+def test_timeline_rfe_patent_of_addition_flag_without_parent_date_falls_back_to_own_formula():
+    in_date = date(2026, 1, 1)
+    own_deadline = compute_rfe_deadline(in_date)
+
+    validate_timeline_updates(
+        [
+            (STATUS_ID_APPLICATION_FILED, in_date),
+            (STATUS_ID_REQUEST_FOR_EXAMINATION, own_deadline),
+        ],
+        requires_non_provisional=False,
+        in_application_date=in_date,
+        is_patent_of_addition=True,
+        parent_application_date=None,
+    )
+
+    with pytest.raises(ValueError, match="Patent of Addition"):
+        validate_timeline_updates(
+            [
+                (STATUS_ID_APPLICATION_FILED, in_date),
+                (STATUS_ID_REQUEST_FOR_EXAMINATION, own_deadline + timedelta(days=1)),
+            ],
+            requires_non_provisional=False,
+            in_application_date=in_date,
+            is_patent_of_addition=True,
+            parent_application_date=None,
+        )
+
+
 def test_divisional_rfe_uses_parent_deadline_when_it_is_later():
     # Parent's own 31-month deadline lands well after divisional's
     # 6-month-from-own-filing deadline -> parent deadline wins.
@@ -483,5 +543,33 @@ def test_divisional_rfe_parent_anchor_uses_parents_earliest_priority_date():
         divisional_filing, parent_date, [parent_priority]
     ) == expected_parent_deadline
     assert expected_parent_deadline < compute_rfe_deadline(parent_date)
+
+
+def test_patent_of_addition_rfe_uses_parent_date_when_present_no_own_floor():
+    # Unlike Divisional, there is no 6-month-from-own-filing floor - the
+    # parent deadline applies even when it is earlier than own+6mo.
+    own_filing = date(2026, 1, 1)
+    parent_date = date(2018, 1, 1)  # pre-amendment -> 48 months -> 2022-01-01
+    expected = compute_rfe_deadline(parent_date)
+    assert expected < date(2026, 7, 1)  # own+6mo would be later, but must not apply
+    assert compute_patent_of_addition_rfe_deadline(own_filing, [], parent_date) == expected
+
+
+def test_patent_of_addition_rfe_falls_back_to_own_date_without_parent():
+    own_filing = date(2026, 1, 1)
+    own_priority = date(2024, 6, 1)
+    expected = compute_rfe_deadline(own_filing, [own_priority])
+    assert compute_patent_of_addition_rfe_deadline(own_filing, [own_priority], None) == expected
+
+
+def test_patent_of_addition_rfe_parent_anchor_uses_parents_earliest_priority_date():
+    parent_date = date(2024, 6, 1)  # on/after rule change -> 31 months
+    parent_priority = date(2023, 1, 1)
+    own_filing = date(2026, 1, 1)
+    expected = compute_rfe_deadline(parent_date, [parent_priority])
+    assert compute_patent_of_addition_rfe_deadline(
+        own_filing, [], parent_date, [parent_priority]
+    ) == expected
+    assert expected < compute_rfe_deadline(parent_date)
 
 

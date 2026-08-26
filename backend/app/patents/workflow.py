@@ -147,6 +147,24 @@ def compute_divisional_rfe_deadline(
     return max(parent_deadline, own_deadline)
 
 
+def compute_patent_of_addition_rfe_deadline(
+    own_in_application_date: date,
+    own_priority_dates: Sequence[date],
+    parent_application_date: date | None,
+    parent_priority_dates: Sequence[date] = (),
+) -> date:
+    """RFE deadline for a Patent of Addition application.
+
+    31/48 months (per the usual rule-change cutoff) from the parent
+    application's filing/priority date when a parent is on file; otherwise
+    the plain formula anchored on the Patent of Addition's own filing/
+    priority date. No 6-month-from-own-filing floor (unlike Divisional).
+    """
+    if parent_application_date:
+        return compute_rfe_deadline(parent_application_date, parent_priority_dates)
+    return compute_rfe_deadline(own_in_application_date, own_priority_dates)
+
+
 def _validate_request_for_examination(
 
     rfe_date: date,
@@ -157,6 +175,7 @@ def _validate_request_for_examination(
 
     *,
     is_divisional: bool = False,
+    is_patent_of_addition: bool = False,
     parent_application_date: date | None = None,
     parent_priority_dates: Sequence[date] = (),
 
@@ -177,6 +196,18 @@ def _validate_request_for_examination(
                 "Request for Examination date must be within 31/48 months (per rule-change date) of "
                 "the parent application's filing/priority date, or 6 months of the divisional's own "
                 "filing date, whichever is later"
+            )
+        return
+
+    if is_patent_of_addition:
+        deadline = compute_patent_of_addition_rfe_deadline(
+            in_application_date, priority_dates, parent_application_date, parent_priority_dates
+        )
+        if rfe_date > deadline:
+            raise ValueError(
+                "Request for Examination date must be within 31/48 months (per rule-change date) of "
+                "the parent application's filing/priority date, or of the Patent of Addition's own "
+                "filing/priority date if no parent application is on file"
             )
         return
 
@@ -314,6 +345,7 @@ def validate_timeline_updates(
 
     *,
     is_divisional: bool = False,
+    is_patent_of_addition: bool = False,
     parent_application_date: date | None = None,
     parent_priority_dates: Sequence[date] = (),
 
@@ -408,6 +440,7 @@ def validate_timeline_updates(
             priority_dates or (),
 
             is_divisional=is_divisional,
+            is_patent_of_addition=is_patent_of_addition,
             parent_application_date=parent_application_date,
             parent_priority_dates=parent_priority_dates,
 

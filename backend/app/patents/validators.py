@@ -60,6 +60,19 @@ DIVISIONAL_APPLICATION_TYPES = frozenset(
     }
 )
 
+# Patent of Addition applications may optionally reference a parent
+# application too, and their RFE deadline is anchored on the parent's
+# filing/priority date when a parent is on file. Unlike Divisional types,
+# their own date validations (year-match, priority-window, required-
+# priority-row) are NOT skipped - parent linkage is purely additive here.
+PATENT_OF_ADDITION_APPLICATION_TYPES = frozenset(
+    {
+        "Ordinary-Patnet of Addition",
+        "Convention - Patent of Addition",
+        "PCT National Phase Entry - Patent of Addition",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ApplicationDetermination:

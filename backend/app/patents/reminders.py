@@ -14,8 +14,12 @@ from .patent_status_catalog import (
     STATUS_ID_REQUEST_FOR_EXAMINATION,
     TERMINAL_STATUS_IDS,
 )
-from .validators import DIVISIONAL_APPLICATION_TYPES
-from .workflow import compute_divisional_rfe_deadline, compute_rfe_deadline
+from .validators import DIVISIONAL_APPLICATION_TYPES, PATENT_OF_ADDITION_APPLICATION_TYPES
+from .workflow import (
+    compute_divisional_rfe_deadline,
+    compute_patent_of_addition_rfe_deadline,
+    compute_rfe_deadline,
+)
 
 
 @dataclass(frozen=True)
@@ -80,10 +84,16 @@ def compute_next_patent_action(
         if provisional_kind == "OP":
             filing_date = filled.get(STATUS_ID_NON_PROVISIONAL_APPLICATION) or filing_date
         if filing_date:
-            is_divisional = (application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES
+            normalized_type = (application_type or "").strip()
+            is_divisional = normalized_type in DIVISIONAL_APPLICATION_TYPES
+            is_patent_of_addition = normalized_type in PATENT_OF_ADDITION_APPLICATION_TYPES
             if is_divisional and parent_application_date:
                 deadline = compute_divisional_rfe_deadline(
                     filing_date, parent_application_date, parent_priority_dates
+                )
+            elif is_patent_of_addition:
+                deadline = compute_patent_of_addition_rfe_deadline(
+                    filing_date, priority_dates, parent_application_date, parent_priority_dates
                 )
             else:
                 deadline = compute_rfe_deadline(filing_date, priority_dates)
