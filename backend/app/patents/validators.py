@@ -205,10 +205,22 @@ def validate_create_project_filing_windows(payload: "PatentProjectCreate") -> No
             raise ValueError("At least one conventional priority application is required")
         if not payload.international_applications:
             raise ValueError("At least one PCT international application is required")
-        for international in payload.international_applications:
-            validate_in_within_months_of_anchor(
-                in_application_date=in_date,
-                anchor_date=international.international_application_date,
-                months=31,
-                anchor_label="international application date",
-            )
+        # 31-month national-phase-entry window: measured from the (earliest)
+        # priority date when a priority claim exists, otherwise from the PCT
+        # international filing date.
+        if payload.priorities:
+            for priority in payload.priorities:
+                validate_in_within_months_of_anchor(
+                    in_application_date=in_date,
+                    anchor_date=priority.priority_application_date,
+                    months=31,
+                    anchor_label="priority application date",
+                )
+        else:
+            for international in payload.international_applications:
+                validate_in_within_months_of_anchor(
+                    in_application_date=in_date,
+                    anchor_date=international.international_application_date,
+                    months=31,
+                    anchor_label="international application date",
+                )

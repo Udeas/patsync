@@ -238,7 +238,9 @@ def test_pct_wipo_off_requires_convention_and_intl_rows():
 
 
 
-def test_pct_wipo_off_validates_in_against_intl_not_priority():
+def test_pct_wipo_off_validates_in_against_priority_not_intl():
+    # priority date within 31 months of IN date, intl date far outside the
+    # window - must still pass, since priority governs whenever present.
 
     validate_create_project_filing_windows(
 
@@ -262,11 +264,11 @@ def test_pct_wipo_off_validates_in_against_intl_not_priority():
 
                     priority_application_no="US123",
 
-                    priority_application_date=date(2020, 1, 1),
+                    priority_application_date=date(2023, 8, 1),
 
                     country="US",
 
-                    title="Old priority",
+                    title="Priority",
 
                 )
 
@@ -278,7 +280,7 @@ def test_pct_wipo_off_validates_in_against_intl_not_priority():
 
                     international_application_no="PCT/US2024/123456",
 
-                    international_application_date=date(2025, 8, 1),
+                    international_application_date=date(2020, 1, 1),
 
                 )
 
@@ -290,6 +292,36 @@ def test_pct_wipo_off_validates_in_against_intl_not_priority():
 
 
 
+
+
+def test_pct_rejects_in_beyond_thirty_one_months_from_priority_even_if_intl_is_within_window():
+    # priority date beyond 31 months from IN date must still fail even
+    # though the intl/PCT date alone would be within the 31-month window.
+    with pytest.raises(ValueError, match="31 months"):
+        validate_create_project_filing_windows(
+            PatentProjectCreate(
+                project_mode="final",
+                application_type="PCT National Phase Entry",
+                docket_no="P-2b",
+                in_application_date=date(2026, 2, 1),
+                applicant_name="Test",
+                pct_wipo_filed_only=False,
+                priorities=[
+                    PatentPriorityInput(
+                        priority_application_no="US123",
+                        priority_application_date=date(2020, 1, 1),
+                        country="US",
+                        title="Old priority",
+                    )
+                ],
+                international_applications=[
+                    PatentInternationalInput(
+                        international_application_no="PCT/US2024/123456",
+                        international_application_date=date(2025, 8, 1),
+                    )
+                ],
+            )
+        )
 
 
 def test_pct_wipo_on_rejects_convention_priorities():
