@@ -105,6 +105,9 @@ class PatentProjectCreate(SQLModel):
     parent_project_id: Optional[int] = None
     parent_application_no: Optional[str] = None
     parent_application_date: Optional[date] = None
+    grant_number: Optional[str] = None
+    annuity_paid_upto: Optional[date] = None
+    next_annuity_due: Optional[date] = None
     inventors: list[PatentInventorInput] = Field(default_factory=list)
     priorities: list[PatentPriorityInput] = Field(default_factory=list)
     international_applications: list[PatentInternationalInput] = Field(default_factory=list)
@@ -146,6 +149,9 @@ class PatentProjectRead(SQLModel):
     parent_docket_no: Optional[str] = None
     parent_client_docket_no: Optional[str] = None
     parent_priority_dates: list[date] = Field(default_factory=list)
+    grant_number: Optional[str] = None
+    annuity_paid_upto: Optional[date] = None
+    next_annuity_due: Optional[date] = None
     current_status_id: Optional[int] = None
     current_status_date: Optional[date] = None
     due_action: Optional[str] = None
@@ -197,6 +203,9 @@ class PatentProjectUpdate(SQLModel):
     parent_project_id: Optional[int] = None
     parent_application_no: Optional[str] = None
     parent_application_date: Optional[date] = None
+    grant_number: Optional[str] = None
+    annuity_paid_upto: Optional[date] = None
+    next_annuity_due: Optional[date] = None
     inventors: Optional[list[PatentInventorInput]] = None
     priorities: Optional[list[PatentPriorityInput]] = None
     international_applications: Optional[list[PatentInternationalInput]] = None

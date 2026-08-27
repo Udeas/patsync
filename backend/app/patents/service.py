@@ -17,7 +17,7 @@ from .models import (
     PatentProject,
     PatentStatusEvent,
 )
-from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, status_label
+from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, STATUS_ID_GRANTED, status_label
 from .reminders import compute_next_patent_action
 from .patent_status_catalog import ALL_STATUS_IDS
 from app.audit.service import record_status_change
@@ -322,6 +322,9 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         "parent_application_no": project.parent_application_no,
         "parent_application_date": project.parent_application_date,
         "parent_priority_dates": parent_priority_dates_raw,
+        "grant_number": project.grant_number,
+        "annuity_paid_upto": project.annuity_paid_upto,
+        "next_annuity_due": project.next_annuity_due,
         "is_archived": project.is_archived,
         "client_docket_no": project.client_docket_no,
         "abandon_reason": project.abandon_reason,
@@ -478,6 +481,9 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
         parent_project_id=payload.parent_project_id,
         parent_application_no=payload.parent_application_no,
         parent_application_date=payload.parent_application_date,
+        grant_number=payload.grant_number,
+        annuity_paid_upto=payload.annuity_paid_upto,
+        next_annuity_due=payload.next_annuity_due,
     )
     session.add(project)
     session.flush()
@@ -802,6 +808,12 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
         project.parent_application_no = payload.parent_application_no
     if payload.parent_application_date is not None:
         project.parent_application_date = payload.parent_application_date
+    if payload.grant_number is not None:
+        project.grant_number = payload.grant_number
+    if payload.annuity_paid_upto is not None:
+        project.annuity_paid_upto = payload.annuity_paid_upto
+    if payload.next_annuity_due is not None:
+        project.next_annuity_due = payload.next_annuity_due
 
     if payload.applicants is not None:
         existing_applicants = session.exec(
@@ -929,6 +941,13 @@ def update_project_detail(
         if status_id not in ALL_STATUS_IDS:
             raise ValueError(f"Invalid status id: {status_id}")
 
+    granted_item = next(
+        (item for item in detail_update.timeline_updates if item.status_id == STATUS_ID_GRANTED),
+        None,
+    )
+    if granted_item and granted_item.status_date and not (project.grant_number or "").strip():
+        raise ValueError("Grant number is required once Grant date is set")
+
     priorities = session.exec(
         select(PatentPriority).where(PatentPriority.project_id == project_id)
     ).all()
@@ -989,6 +1008,9 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
         if not reason:
             raise ValueError("Abandon reason is required.")
         project.abandon_reason = reason
+
+    if status_id == STATUS_ID_GRANTED and status_date and not (project.grant_number or "").strip():
+        raise ValueError("Grant number is required once Grant date is set")
 
     events = session.exec(
         select(PatentStatusEvent).where(PatentStatusEvent.project_id == project_id)

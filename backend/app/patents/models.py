@@ -29,6 +29,9 @@ class PatentProject(SQLModel, table=True):
     parent_project_id: Optional[int] = Field(default=None, foreign_key="patent_project.id")
     parent_application_no: Optional[str] = Field(default=None)
     parent_application_date: Optional[date] = Field(default=None)
+    grant_number: Optional[str] = Field(default=None)
+    annuity_paid_upto: Optional[date] = Field(default=None)
+    next_annuity_due: Optional[date] = Field(default=None)
     pct_wipo_filed_only: bool = Field(default=False)
     is_archived: bool = Field(default=False, nullable=False, index=True)
     created_date: datetime = Field(
