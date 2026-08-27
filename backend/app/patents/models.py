@@ -118,6 +118,18 @@ class PatentAnnuityPaymentYear(SQLModel, table=True):
     renewal_year: int = Field(nullable=False)
 
 
+class PatentProjectNote(SQLModel, table=True):
+    __tablename__ = "patent_project_note"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    note_text: str = Field(sa_column=Column(Text, nullable=False))
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
 class PatentClient(SQLModel, table=True):
     __tablename__ = "patent_client"
 

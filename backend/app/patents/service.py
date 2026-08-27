@@ -17,6 +17,7 @@ from .models import (
     PatentInventor,
     PatentPriority,
     PatentProject,
+    PatentProjectNote,
     PatentStatusEvent,
 )
 from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, STATUS_ID_GRANTED, status_label
@@ -40,6 +41,8 @@ from .schemas import (
     PatentPriorityInput,
     PatentProjectCreate,
     PatentProjectDetailUpdate,
+    PatentProjectNoteInput,
+    PatentProjectNoteRead,
     PatentProjectUpdate,
 )
 from .validators import (
@@ -188,8 +191,13 @@ def _build_relations_dict(
     parent_client_docket_no=None,
     parent_priority_dates=(),
     annuity_paid_years=(),
+    notes=(),
 ) -> dict:
     return {
+        "notes": [
+            {"id": n.id, "note_text": n.note_text, "created_date": n.created_date}
+            for n in notes
+        ],
         "applicants": [
             {"name": applicant.name, "country": applicant.country, "address": applicant.address}
             for applicant in applicants
@@ -257,6 +265,7 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         .where(PatentStatusEvent.project_id == project.id)
         .order_by(PatentStatusEvent.status_date.asc(), PatentStatusEvent.status_id.asc())
     ).all()
+    notes = _project_notes(session, project.id)
 
     attorney = (
         _agent_to_dict(session.get(PatentAgent, project.attorney_id))
@@ -291,7 +300,33 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         parent_client_docket_no=parent_client_docket_no,
         parent_priority_dates=parent_priority_dates,
         annuity_paid_years=_annuity_paid_years(session, project.id),
+        notes=notes,
     )
+
+
+def _project_notes(session: Session, project_id: int) -> list[PatentProjectNote]:
+    return session.exec(
+        select(PatentProjectNote)
+        .where(PatentProjectNote.project_id == project_id)
+        .order_by(PatentProjectNote.created_date.desc(), PatentProjectNote.id.desc())
+    ).all()
+
+
+def add_project_note(
+    session: Session, project_id: int, payload: PatentProjectNoteInput
+) -> list[PatentProjectNoteRead] | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    note_text = payload.note_text.strip()
+    if not note_text:
+        raise ValueError("Note text is required")
+    session.add(PatentProjectNote(project_id=project_id, note_text=note_text))
+    session.commit()
+    return [
+        PatentProjectNoteRead(id=n.id, note_text=n.note_text, created_date=n.created_date)
+        for n in _project_notes(session, project_id)
+    ]
 
 
 def _annuity_paid_years(session: Session, project_id: int) -> list[int]:

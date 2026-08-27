@@ -67,6 +67,12 @@ class PatentStatusEventRead(SQLModel):
     status_date: date
 
 
+class PatentProjectNoteRead(SQLModel):
+    id: int
+    note_text: str
+    created_date: datetime
+
+
 class PatentAgentSummary(SQLModel):
     id: int
     name: str
@@ -165,6 +171,7 @@ class PatentProjectRead(SQLModel):
     client_docket_no: Optional[str] = None
     abandon_reason: Optional[str] = None
     is_archived: bool = False
+    notes: list[PatentProjectNoteRead] = Field(default_factory=list)
 
 
 class PatentDraftFinalizeRequest(SQLModel):
@@ -323,3 +330,7 @@ class PatentAnnuitySummary(SQLModel):
 
 class PatentAnnuityTransferInput(SQLModel):
     comment: str = Field(min_length=1)
+
+
+class PatentProjectNoteInput(SQLModel):
+    note_text: str = Field(min_length=1)
