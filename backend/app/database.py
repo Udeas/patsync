@@ -694,6 +694,10 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_paid_upto DATE"))
         if not _postgres_column_exists(conn, "patent_project", "next_annuity_due"):
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN next_annuity_due DATE"))
+        if not _postgres_column_exists(conn, "patent_project", "annuity_transferred_at"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_at TIMESTAMPTZ"))
+        if not _postgres_column_exists(conn, "patent_project", "annuity_transferred_comment"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_comment TEXT"))
         conn.execute(
             text(
                 """
@@ -792,6 +796,10 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_paid_upto DATE"))
         if not _sqlite_column_exists(conn, "patent_project", "next_annuity_due"):
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN next_annuity_due DATE"))
+        if not _sqlite_column_exists(conn, "patent_project", "annuity_transferred_at"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_at TIMESTAMP"))
+        if not _sqlite_column_exists(conn, "patent_project", "annuity_transferred_comment"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_comment TEXT"))
     conn.execute(
         text(
             """

@@ -11,6 +11,7 @@ from .schemas import (
     PatentAgentUpdate,
     PatentAnnuityPaymentInput,
     PatentAnnuitySummary,
+    PatentAnnuityTransferInput,
     PatentClientInput,
     PatentClientRead,
     PatentClientUpdate,
@@ -30,6 +31,7 @@ from .service import (
     delete_patent_agent,
     delete_patent_client,
     get_annuity_summary,
+    transfer_annuity_case,
     get_project,
     list_patent_agents,
     list_patent_clients,
@@ -153,6 +155,21 @@ def record_annuity_payment_endpoint(
 ):
     try:
         summary = record_annuity_payment(session, project_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Patent project not found")
+    return summary
+
+
+@router.post("/projects/{project_id}/annuity/transfer", response_model=PatentAnnuitySummary)
+def transfer_annuity_case_endpoint(
+    project_id: int,
+    payload: PatentAnnuityTransferInput,
+    session: Session = Depends(get_session),
+):
+    try:
+        summary = transfer_annuity_case(session, project_id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if summary is None:

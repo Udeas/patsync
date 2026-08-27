@@ -10,6 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.patents.patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_GRANTED
 from app.patents.schemas import (
     PatentAnnuityPaymentInput,
+    PatentAnnuityTransferInput,
     PatentApplicantInput,
     PatentInventorInput,
     PatentProjectCreate,
@@ -18,7 +19,9 @@ from app.patents.schemas import (
 from app.patents.service import (
     create_project,
     get_annuity_summary,
+    get_project,
     record_annuity_payment,
+    transfer_annuity_case,
     update_project,
     update_status_event,
 )
@@ -221,4 +224,86 @@ def test_7_grant_date_change_after_payment_preserves_payment_history():
         assert summary.payments[0].payment_date == date(2026, 11, 13)
         assert summary.payments[0].total_fee == 28_000
         assert summary.payments[0].years == [3, 4, 5, 6, 7]
+        assert summary.paid_till_date == date(2027, 12, 24)
+
+
+# --- Transfer: locks the case, no further reminders/payments ---------------
+
+
+def test_transfer_marks_case_locked_and_clears_next_due():
+    with _make_session() as session:
+        project = _create_e17_06in(session)
+        _grant(session, project["id"])
+
+        before = get_annuity_summary(session, project["id"])
+        assert before.is_transferred is False
+        assert before.accumulated_unpaid_years == [3, 4, 5, 6, 7]
+        assert before.next_due_date is not None
+
+        summary = transfer_annuity_case(
+            session, project["id"], PatentAnnuityTransferInput(comment="Client moved to another firm")
+        )
+        assert summary is not None
+        assert summary.is_transferred is True
+        assert summary.transferred_comment == "Client moved to another firm"
+        assert summary.transferred_at is not None
+        assert summary.next_due_year is None
+        assert summary.next_due_date is None
+        assert summary.is_post_grant_deadline_pending is False
+        assert summary.accumulated_unpaid_years == []
+
+
+def test_transfer_suppresses_due_action_on_the_project_response():
+    with _make_session() as session:
+        project = _create_e17_06in(session)
+        _grant(session, project["id"])
+        transfer_annuity_case(session, project["id"], PatentAnnuityTransferInput(comment="Transferred"))
+
+        row = get_project(session, project["id"])
+        assert row is not None
+        assert row["due_action"] is None
+        assert row["action_due_date"] is None
+
+
+def test_transfer_requires_a_comment():
+    with _make_session() as session:
+        project = _create_e17_06in(session)
+        _grant(session, project["id"])
+        with pytest.raises(ValueError):
+            transfer_annuity_case(session, project["id"], PatentAnnuityTransferInput(comment="   "))
+
+
+def test_transfer_cannot_be_done_twice():
+    with _make_session() as session:
+        project = _create_e17_06in(session)
+        _grant(session, project["id"])
+        transfer_annuity_case(session, project["id"], PatentAnnuityTransferInput(comment="First"))
+        with pytest.raises(ValueError, match="already"):
+            transfer_annuity_case(session, project["id"], PatentAnnuityTransferInput(comment="Second"))
+
+
+def test_payment_rejected_after_transfer():
+    with _make_session() as session:
+        project = _create_e17_06in(session)
+        _grant(session, project["id"])
+        transfer_annuity_case(session, project["id"], PatentAnnuityTransferInput(comment="Transferred"))
+
+        with pytest.raises(ValueError, match="transferred"):
+            record_annuity_payment(
+                session, project["id"], PatentAnnuityPaymentInput(payment_date=date(2026, 11, 13), years=[3])
+            )
+
+
+def test_transfer_preserves_existing_payment_history():
+    with _make_session() as session:
+        project = _create_e17_06in(session)
+        _grant(session, project["id"])
+        record_annuity_payment(
+            session, project["id"], PatentAnnuityPaymentInput(payment_date=date(2026, 11, 13), years=[3, 4, 5, 6, 7])
+        )
+
+        summary = transfer_annuity_case(session, project["id"], PatentAnnuityTransferInput(comment="Transferred"))
+        assert summary is not None
+        assert len(summary.payments) == 1
+        assert summary.payments[0].total_fee == 28_000
         assert summary.paid_till_date == date(2027, 12, 24)

@@ -50,10 +50,15 @@ def compute_next_patent_action(
     parent_priority_dates: Sequence[date] = (),
     grant_date: date | None = None,
     annuity_paid_years: Sequence[int] = (),
+    is_annuity_transferred: bool = False,
 ) -> NextPatentAction | None:
     if current_status_id == STATUS_ID_GRANTED:
         # Granted is otherwise terminal (no further action) - but once
         # granted, renewal ("annuity") fees become the next thing due.
+        # Once the case is marked transferred, it's locked: no further
+        # annuity reminder is ever shown again, regardless of what's paid.
+        if is_annuity_transferred:
+            return None
         filing_date = in_application_date or filled.get(STATUS_ID_APPLICATION_FILED)
         action = annuity.compute_next_annuity_action(
             filing_date, grant_date or filled.get(STATUS_ID_GRANTED), annuity_paid_years

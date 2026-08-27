@@ -32,6 +32,10 @@ class PatentProject(SQLModel, table=True):
     grant_number: Optional[str] = Field(default=None)
     annuity_paid_upto: Optional[date] = Field(default=None)
     next_annuity_due: Optional[date] = Field(default=None)
+    annuity_transferred_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    annuity_transferred_comment: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     pct_wipo_filed_only: bool = Field(default=False)
     is_archived: bool = Field(default=False, nullable=False, index=True)
     created_date: datetime = Field(

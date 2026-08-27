@@ -32,6 +32,7 @@ from .schemas import (
     PatentAnnuityPaymentRead,
     PatentAnnuityScheduleRow,
     PatentAnnuitySummary,
+    PatentAnnuityTransferInput,
     PatentClientInput,
     PatentClientUpdate,
     PatentDraftFinalizeRequest,
@@ -327,6 +328,7 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         parent_priority_dates=parent_priority_dates_raw,
         grant_date=grant_date,
         annuity_paid_years=annuity_paid_years_raw,
+        is_annuity_transferred=project.annuity_transferred_at is not None,
     )
     due_action = next_action.message if next_action else None
     action_due_date = next_action.due_date if next_action else None
@@ -1333,6 +1335,17 @@ def get_annuity_summary(session: Session, project_id: int) -> PatentAnnuitySumma
             next_year = min(accumulated)
             next_due_date = annuity.post_grant_payment_deadline(grant_date)
 
+    is_transferred = project.annuity_transferred_at is not None
+    if is_transferred:
+        # Case is locked: no further reminder of any kind, ever, regardless
+        # of what's paid. Schedule/payment history stay visible (still a
+        # useful historical record), only the "what's due next" signals
+        # are suppressed.
+        next_year = None
+        next_due_date = None
+        is_post_grant_pending = False
+        accumulated_unpaid = []
+
     return PatentAnnuitySummary(
         filing_date=filing_date,
         grant_date=grant_date,
@@ -1342,11 +1355,14 @@ def get_annuity_summary(session: Session, project_id: int) -> PatentAnnuitySumma
         paid_years=paid_years,
         paid_till_year=paid_till_yr,
         paid_till_date=paid_till_dt,
-        next_due_year=next_year if next_year <= annuity.LAST_RENEWAL_YEAR else None,
+        next_due_year=(next_year if next_year and next_year <= annuity.LAST_RENEWAL_YEAR else None),
         next_due_date=next_due_date,
         is_post_grant_deadline_pending=is_post_grant_pending,
         accumulated_unpaid_years=accumulated_unpaid,
         orphaned_paid_years=annuity.orphaned_paid_years(paid_years),
+        is_transferred=is_transferred,
+        transferred_at=project.annuity_transferred_at,
+        transferred_comment=project.annuity_transferred_comment,
     )
 
 
@@ -1356,6 +1372,8 @@ def record_annuity_payment(
     project = session.get(PatentProject, project_id)
     if not project:
         return None
+    if project.annuity_transferred_at is not None:
+        raise ValueError("This docket's annuity case has been marked transferred; no further payments can be recorded")
     if not project.in_application_date:
         raise ValueError("Filing (IN application) date is required before recording an annuity payment")
 
@@ -1390,6 +1408,28 @@ def record_annuity_payment(
         if next_year <= annuity.LAST_RENEWAL_YEAR
         else None
     )
+    project.modified_date = datetime.utcnow()
+    session.add(project)
+    session.commit()
+
+    return get_annuity_summary(session, project_id)
+
+
+def transfer_annuity_case(
+    session: Session, project_id: int, payload: PatentAnnuityTransferInput
+) -> PatentAnnuitySummary | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    if project.annuity_transferred_at is not None:
+        raise ValueError("This docket's annuity case is already marked transferred")
+
+    comment = payload.comment.strip()
+    if not comment:
+        raise ValueError("A comment is required to mark the annuity case as transferred")
+
+    project.annuity_transferred_at = datetime.utcnow()
+    project.annuity_transferred_comment = comment
     project.modified_date = datetime.utcnow()
     session.add(project)
     session.commit()

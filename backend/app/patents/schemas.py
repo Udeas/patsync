@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import field_validator
@@ -316,3 +316,10 @@ class PatentAnnuitySummary(SQLModel):
     is_post_grant_deadline_pending: bool = False
     accumulated_unpaid_years: list[int] = Field(default_factory=list)
     orphaned_paid_years: list[int] = Field(default_factory=list)
+    is_transferred: bool = False
+    transferred_at: Optional[datetime] = None
+    transferred_comment: Optional[str] = None
+
+
+class PatentAnnuityTransferInput(SQLModel):
+    comment: str = Field(min_length=1)
