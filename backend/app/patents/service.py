@@ -8,6 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from .models import (
+    PatentAnnuityPayment,
+    PatentAnnuityPaymentYear,
     PatentApplicant,
     PatentAgent,
     PatentClient,
@@ -22,9 +24,14 @@ from .reminders import compute_next_patent_action
 from .patent_status_catalog import ALL_STATUS_IDS
 from app.audit.service import record_status_change
 from app.audit.context import mark_explicit
+from . import annuity
 from .schemas import (
     PatentAgentInput,
     PatentAgentUpdate,
+    PatentAnnuityPaymentInput,
+    PatentAnnuityPaymentRead,
+    PatentAnnuityScheduleRow,
+    PatentAnnuitySummary,
     PatentClientInput,
     PatentClientUpdate,
     PatentDraftFinalizeRequest,
@@ -179,6 +186,7 @@ def _build_relations_dict(
     parent_docket_no=None,
     parent_client_docket_no=None,
     parent_priority_dates=(),
+    annuity_paid_years=(),
 ) -> dict:
     return {
         "applicants": [
@@ -215,6 +223,7 @@ def _build_relations_dict(
         "parent_client_docket_no": parent_client_docket_no,
         "_status_events_raw": status_events,
         "_parent_priority_dates_raw": list(parent_priority_dates),
+        "_annuity_paid_years_raw": list(annuity_paid_years),
     }
 
 
@@ -280,18 +289,33 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         parent_docket_no=parent_docket_no,
         parent_client_docket_no=parent_client_docket_no,
         parent_priority_dates=parent_priority_dates,
+        annuity_paid_years=_annuity_paid_years(session, project.id),
     )
+
+
+def _annuity_paid_years(session: Session, project_id: int) -> list[int]:
+    payment_ids = session.exec(
+        select(PatentAnnuityPayment.id).where(PatentAnnuityPayment.project_id == project_id)
+    ).all()
+    if not payment_ids:
+        return []
+    rows = session.exec(
+        select(PatentAnnuityPaymentYear).where(PatentAnnuityPaymentYear.payment_id.in_(payment_ids))
+    ).all()
+    return [row.renewal_year for row in rows]
 
 
 def _assemble_response(project: PatentProject, relations: dict) -> dict:
     relations = dict(relations)
     status_events_raw = relations.pop("_status_events_raw")
     parent_priority_dates_raw = relations.pop("_parent_priority_dates_raw", [])
+    annuity_paid_years_raw = relations.pop("_annuity_paid_years_raw", [])
     filled_status = {event.status_id: event.status_date for event in status_events_raw}
     current_status = derive_current_status(filled_status)
     priority_dates = [
         p["priority_application_date"] for p in relations["priorities"]
     ]
+    grant_date = filled_status.get(STATUS_ID_GRANTED)
     next_action = compute_next_patent_action(
         filled=filled_status,
         current_status_id=current_status[0] if current_status else None,
@@ -301,6 +325,8 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         application_type=project.application_type,
         parent_application_date=project.parent_application_date,
         parent_priority_dates=parent_priority_dates_raw,
+        grant_date=grant_date,
+        annuity_paid_years=annuity_paid_years_raw,
     )
     due_action = next_action.message if next_action else None
     action_due_date = next_action.due_date if next_action else None
@@ -613,6 +639,25 @@ def _load_relations_bulk(
         ).all():
             clients_by_id[patent_client.id] = _client_to_dict(patent_client)
 
+    annuity_payments_by = _grouped(
+        session.exec(
+            select(PatentAnnuityPayment).where(PatentAnnuityPayment.project_id.in_(project_ids))
+        ).all()
+    )
+    all_payment_ids = [payment.id for payments in annuity_payments_by.values() for payment in payments]
+    annuity_payment_years_by_payment: dict[int, list[int]] = defaultdict(list)
+    if all_payment_ids:
+        for row in session.exec(
+            select(PatentAnnuityPaymentYear).where(PatentAnnuityPaymentYear.payment_id.in_(all_payment_ids))
+        ).all():
+            annuity_payment_years_by_payment[row.payment_id].append(row.renewal_year)
+    annuity_paid_years_by_project: dict[int, list[int]] = {}
+    for project_id, payments in annuity_payments_by.items():
+        years: list[int] = []
+        for payment in payments:
+            years.extend(annuity_payment_years_by_payment.get(payment.id, []))
+        annuity_paid_years_by_project[project_id] = years
+
     relations_by_project: dict[int, dict] = {}
     for project in projects:
         parent = parents_by_id.get(project.parent_project_id) if project.parent_project_id else None
@@ -624,6 +669,7 @@ def _load_relations_bulk(
             status_events=status_events_by.get(project.id, []),
             attorney=agents_by_id.get(project.attorney_id) if project.attorney_id else None,
             client=clients_by_id.get(project.client_id) if project.client_id else None,
+            annuity_paid_years=annuity_paid_years_by_project.get(project.id, []),
             parent_docket_no=parent.docket_no if parent else None,
             parent_client_docket_no=parent.client_docket_no if parent else None,
             parent_priority_dates=(
@@ -1199,3 +1245,153 @@ def delete_patent_agent(session: Session, agent_id: int) -> bool:
         session.rollback()
         raise ValueError("Cannot delete attorney because it is used in existing patent projects") from exc
     return True
+
+
+def _annuity_grant_date(session: Session, project_id: int) -> date | None:
+    event = session.exec(
+        select(PatentStatusEvent).where(
+            PatentStatusEvent.project_id == project_id,
+            PatentStatusEvent.status_id == STATUS_ID_GRANTED,
+        )
+    ).first()
+    return event.status_date if event else None
+
+
+def get_annuity_summary(session: Session, project_id: int) -> PatentAnnuitySummary | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+
+    filing_date = project.in_application_date
+    grant_date = _annuity_grant_date(session, project_id)
+
+    payments = session.exec(
+        select(PatentAnnuityPayment)
+        .where(PatentAnnuityPayment.project_id == project_id)
+        .order_by(PatentAnnuityPayment.payment_date.asc(), PatentAnnuityPayment.id.asc())
+    ).all()
+
+    years_by_payment: dict[int, list[int]] = {}
+    for payment in payments:
+        rows = session.exec(
+            select(PatentAnnuityPaymentYear)
+            .where(PatentAnnuityPaymentYear.payment_id == payment.id)
+            .order_by(PatentAnnuityPaymentYear.renewal_year.asc())
+        ).all()
+        years_by_payment[payment.id] = [row.renewal_year for row in rows]
+
+    paid_years = sorted({year for years in years_by_payment.values() for year in years})
+
+    payment_reads = [
+        PatentAnnuityPaymentRead(
+            id=payment.id,
+            payment_date=payment.payment_date,
+            total_fee=payment.total_fee,
+            years=years_by_payment[payment.id],
+            years_label=annuity.format_year_range(years_by_payment[payment.id]),
+        )
+        for payment in payments
+    ]
+
+    year_to_payment_id = {
+        year: payment.id for payment in payments for year in years_by_payment[payment.id]
+    }
+
+    schedule: list[PatentAnnuityScheduleRow] = []
+    if filing_date:
+        for year in range(annuity.FIRST_RENEWAL_YEAR, annuity.LAST_RENEWAL_YEAR + 1):
+            schedule.append(
+                PatentAnnuityScheduleRow(
+                    year=year,
+                    due_date=annuity.renewal_year_date(filing_date, year),
+                    fee=annuity.fee_for_year(year),
+                    status="paid" if year in year_to_payment_id else "unpaid",
+                    payment_id=year_to_payment_id.get(year),
+                )
+            )
+
+    paid_till_yr = annuity.paid_till_year(paid_years)
+    paid_till_dt = annuity.paid_till_date(filing_date, paid_years) if filing_date else None
+    next_year = annuity.next_unpaid_year(paid_years)
+    next_due_date = (
+        annuity.renewal_year_date(filing_date, next_year)
+        if filing_date and next_year <= annuity.LAST_RENEWAL_YEAR
+        else None
+    )
+
+    accumulated_unpaid: list[int] = []
+    is_post_grant_pending = False
+    if filing_date and grant_date and not paid_years:
+        accumulated = [
+            year
+            for year in annuity.accumulated_due_years_at_grant(filing_date, grant_date)
+            if year not in paid_years
+        ]
+        if accumulated:
+            accumulated_unpaid = accumulated
+            is_post_grant_pending = True
+            next_year = min(accumulated)
+            next_due_date = annuity.post_grant_payment_deadline(grant_date)
+
+    return PatentAnnuitySummary(
+        filing_date=filing_date,
+        grant_date=grant_date,
+        fee_category=annuity.DEFAULT_FEE_CATEGORY,
+        schedule=schedule,
+        payments=payment_reads,
+        paid_years=paid_years,
+        paid_till_year=paid_till_yr,
+        paid_till_date=paid_till_dt,
+        next_due_year=next_year if next_year <= annuity.LAST_RENEWAL_YEAR else None,
+        next_due_date=next_due_date,
+        is_post_grant_deadline_pending=is_post_grant_pending,
+        accumulated_unpaid_years=accumulated_unpaid,
+        orphaned_paid_years=annuity.orphaned_paid_years(paid_years),
+    )
+
+
+def record_annuity_payment(
+    session: Session, project_id: int, payload: PatentAnnuityPaymentInput
+) -> PatentAnnuitySummary | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    if not project.in_application_date:
+        raise ValueError("Filing (IN application) date is required before recording an annuity payment")
+
+    years = sorted(set(payload.years))
+    if len(years) != len(payload.years):
+        raise ValueError("Duplicate renewal years in the same payment are not allowed")
+    for year in years:
+        annuity.validate_renewal_year(year)
+
+    already_paid = set(_annuity_paid_years(session, project_id))
+    duplicates = [year for year in years if year in already_paid]
+    if duplicates:
+        label = ", ".join(str(year) for year in duplicates)
+        raise ValueError(f"Renewal year(s) {label} already paid")
+
+    total_fee = annuity.compute_fee_for_years(years)
+    payment = PatentAnnuityPayment(
+        project_id=project_id,
+        payment_date=payload.payment_date,
+        total_fee=total_fee,
+    )
+    session.add(payment)
+    session.flush()
+    for year in years:
+        session.add(PatentAnnuityPaymentYear(payment_id=payment.id, renewal_year=year))
+
+    all_paid_years = sorted(already_paid | set(years))
+    project.annuity_paid_upto = annuity.paid_till_date(project.in_application_date, all_paid_years)
+    next_year = annuity.next_unpaid_year(all_paid_years)
+    project.next_annuity_due = (
+        annuity.renewal_year_date(project.in_application_date, next_year)
+        if next_year <= annuity.LAST_RENEWAL_YEAR
+        else None
+    )
+    project.modified_date = datetime.utcnow()
+    session.add(project)
+    session.commit()
+
+    return get_annuity_summary(session, project_id)

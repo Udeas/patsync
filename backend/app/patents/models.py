@@ -93,6 +93,27 @@ class PatentStatusEvent(SQLModel, table=True):
     status_date: date = Field(nullable=False)
 
 
+class PatentAnnuityPayment(SQLModel, table=True):
+    __tablename__ = "patent_annuity_payment"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    payment_date: date = Field(nullable=False)
+    total_fee: int = Field(nullable=False)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PatentAnnuityPaymentYear(SQLModel, table=True):
+    __tablename__ = "patent_annuity_payment_year"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    payment_id: int = Field(nullable=False, foreign_key="patent_annuity_payment.id", index=True)
+    renewal_year: int = Field(nullable=False)
+
+
 class PatentClient(SQLModel, table=True):
     __tablename__ = "patent_client"
 

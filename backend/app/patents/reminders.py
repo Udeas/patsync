@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Mapping, Sequence
 
+from . import annuity
 from .patent_status_catalog import (
     STATUS_ID_APPLICATION_FILED,
     STATUS_ID_FER_ISSUED,
     STATUS_ID_FER_RESPONSE_SUBMITTED,
+    STATUS_ID_GRANTED,
     STATUS_ID_HEARING,
     STATUS_ID_NON_PROVISIONAL_APPLICATION,
     STATUS_ID_REQUEST_FOR_EXAMINATION,
@@ -46,7 +48,20 @@ def compute_next_patent_action(
     application_type: str | None = None,
     parent_application_date: date | None = None,
     parent_priority_dates: Sequence[date] = (),
+    grant_date: date | None = None,
+    annuity_paid_years: Sequence[int] = (),
 ) -> NextPatentAction | None:
+    if current_status_id == STATUS_ID_GRANTED:
+        # Granted is otherwise terminal (no further action) - but once
+        # granted, renewal ("annuity") fees become the next thing due.
+        filing_date = in_application_date or filled.get(STATUS_ID_APPLICATION_FILED)
+        action = annuity.compute_next_annuity_action(
+            filing_date, grant_date or filled.get(STATUS_ID_GRANTED), annuity_paid_years
+        )
+        if action:
+            return NextPatentAction(message=action.message, due_date=action.due_date)
+        return None
+
     if current_status_id is not None and current_status_id in TERMINAL_STATUS_IDS:
         return None
 

@@ -117,7 +117,10 @@ def test_fer_response_current_without_hearing_has_no_due():
     assert action is None
 
 
-def test_granted_current_has_no_due():
+def test_granted_current_shows_next_annuity_action():
+    # Granted used to be a dead end (no next action). It now surfaces the
+    # next renewal ("annuity") fee action - see test_patent_annuity.py for
+    # the full calculation engine coverage.
     action = compute_next_patent_action(
         filled={
             STATUS_ID_APPLICATION_FILED: date(2026, 1, 1),
@@ -125,6 +128,17 @@ def test_granted_current_has_no_due():
         },
         current_status_id=STATUS_ID_GRANTED,
         in_application_date=date(2026, 1, 1),
+    )
+    assert action is not None
+    assert action.message == "Renewal Fee Due — 3rd Year"
+    assert action.due_date == date(2028, 1, 1)
+
+
+def test_granted_with_no_filing_date_has_no_due():
+    action = compute_next_patent_action(
+        filled={STATUS_ID_GRANTED: date(2026, 5, 1)},
+        current_status_id=STATUS_ID_GRANTED,
+        in_application_date=None,
     )
     assert action is None
 
