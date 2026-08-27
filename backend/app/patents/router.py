@@ -11,17 +11,22 @@ from .schemas import (
     PatentAgentUpdate,
     PatentAnnuityPaymentInput,
     PatentAnnuitySummary,
+    PatentAnnuityTransferInput,
     PatentClientInput,
     PatentClientRead,
     PatentClientUpdate,
     PatentDraftFinalizeRequest,
     PatentProjectCreate,
     PatentProjectDetailUpdate,
+    PatentProjectNoteInput,
+    PatentProjectNoteRead,
     PatentProjectRead,
     PatentProjectUpdate,
     PatentStatusUpdate,
 )
 from .service import (
+    add_project_note,
+    update_project_note,
     archive_project,
     convert_draft_to_final,
     create_patent_agent,
@@ -30,6 +35,7 @@ from .service import (
     delete_patent_agent,
     delete_patent_client,
     get_annuity_summary,
+    transfer_annuity_case,
     get_project,
     list_patent_agents,
     list_patent_clients,
@@ -158,6 +164,52 @@ def record_annuity_payment_endpoint(
     if summary is None:
         raise HTTPException(status_code=404, detail="Patent project not found")
     return summary
+
+
+@router.post("/projects/{project_id}/annuity/transfer", response_model=PatentAnnuitySummary)
+def transfer_annuity_case_endpoint(
+    project_id: int,
+    payload: PatentAnnuityTransferInput,
+    session: Session = Depends(get_session),
+):
+    try:
+        summary = transfer_annuity_case(session, project_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Patent project not found")
+    return summary
+
+
+@router.post("/projects/{project_id}/notes", response_model=list[PatentProjectNoteRead])
+def add_project_note_endpoint(
+    project_id: int,
+    payload: PatentProjectNoteInput,
+    session: Session = Depends(get_session),
+):
+    try:
+        notes = add_project_note(session, project_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if notes is None:
+        raise HTTPException(status_code=404, detail="Patent project not found")
+    return notes
+
+
+@router.put("/projects/{project_id}/notes/{note_id}", response_model=list[PatentProjectNoteRead])
+def update_project_note_endpoint(
+    project_id: int,
+    note_id: int,
+    payload: PatentProjectNoteInput,
+    session: Session = Depends(get_session),
+):
+    try:
+        notes = update_project_note(session, project_id, note_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if notes is None:
+        raise HTTPException(status_code=404, detail="Patent project note not found")
+    return notes
 
 
 @router.get("/clients", response_model=list[PatentClientRead])

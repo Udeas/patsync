@@ -32,6 +32,10 @@ class PatentProject(SQLModel, table=True):
     grant_number: Optional[str] = Field(default=None)
     annuity_paid_upto: Optional[date] = Field(default=None)
     next_annuity_due: Optional[date] = Field(default=None)
+    annuity_transferred_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    annuity_transferred_comment: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     pct_wipo_filed_only: bool = Field(default=False)
     is_archived: bool = Field(default=False, nullable=False, index=True)
     created_date: datetime = Field(
@@ -112,6 +116,18 @@ class PatentAnnuityPaymentYear(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     payment_id: int = Field(nullable=False, foreign_key="patent_annuity_payment.id", index=True)
     renewal_year: int = Field(nullable=False)
+
+
+class PatentProjectNote(SQLModel, table=True):
+    __tablename__ = "patent_project_note"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    note_text: str = Field(sa_column=Column(Text, nullable=False))
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
 
 class PatentClient(SQLModel, table=True):

@@ -17,6 +17,7 @@ from .models import (
     PatentInventor,
     PatentPriority,
     PatentProject,
+    PatentProjectNote,
     PatentStatusEvent,
 )
 from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, STATUS_ID_GRANTED, status_label
@@ -32,6 +33,7 @@ from .schemas import (
     PatentAnnuityPaymentRead,
     PatentAnnuityScheduleRow,
     PatentAnnuitySummary,
+    PatentAnnuityTransferInput,
     PatentClientInput,
     PatentClientUpdate,
     PatentDraftFinalizeRequest,
@@ -39,6 +41,8 @@ from .schemas import (
     PatentPriorityInput,
     PatentProjectCreate,
     PatentProjectDetailUpdate,
+    PatentProjectNoteInput,
+    PatentProjectNoteRead,
     PatentProjectUpdate,
 )
 from .validators import (
@@ -187,8 +191,13 @@ def _build_relations_dict(
     parent_client_docket_no=None,
     parent_priority_dates=(),
     annuity_paid_years=(),
+    notes=(),
 ) -> dict:
     return {
+        "notes": [
+            {"id": n.id, "note_text": n.note_text, "created_date": n.created_date}
+            for n in notes
+        ],
         "applicants": [
             {"name": applicant.name, "country": applicant.country, "address": applicant.address}
             for applicant in applicants
@@ -256,6 +265,7 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         .where(PatentStatusEvent.project_id == project.id)
         .order_by(PatentStatusEvent.status_date.asc(), PatentStatusEvent.status_id.asc())
     ).all()
+    notes = _project_notes(session, project.id)
 
     attorney = (
         _agent_to_dict(session.get(PatentAgent, project.attorney_id))
@@ -290,7 +300,54 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         parent_client_docket_no=parent_client_docket_no,
         parent_priority_dates=parent_priority_dates,
         annuity_paid_years=_annuity_paid_years(session, project.id),
+        notes=notes,
     )
+
+
+def _project_notes(session: Session, project_id: int) -> list[PatentProjectNote]:
+    return session.exec(
+        select(PatentProjectNote)
+        .where(PatentProjectNote.project_id == project_id)
+        .order_by(PatentProjectNote.created_date.desc(), PatentProjectNote.id.desc())
+    ).all()
+
+
+def add_project_note(
+    session: Session, project_id: int, payload: PatentProjectNoteInput
+) -> list[PatentProjectNoteRead] | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    note_text = payload.note_text.strip()
+    if not note_text:
+        raise ValueError("Note text is required")
+    session.add(PatentProjectNote(project_id=project_id, note_text=note_text))
+    session.commit()
+    return [
+        PatentProjectNoteRead(id=n.id, note_text=n.note_text, created_date=n.created_date)
+        for n in _project_notes(session, project_id)
+    ]
+
+
+def update_project_note(
+    session: Session, project_id: int, note_id: int, payload: PatentProjectNoteInput
+) -> list[PatentProjectNoteRead] | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    note = session.get(PatentProjectNote, note_id)
+    if not note or note.project_id != project_id:
+        return None
+    note_text = payload.note_text.strip()
+    if not note_text:
+        raise ValueError("Note text is required")
+    note.note_text = note_text
+    session.add(note)
+    session.commit()
+    return [
+        PatentProjectNoteRead(id=n.id, note_text=n.note_text, created_date=n.created_date)
+        for n in _project_notes(session, project_id)
+    ]
 
 
 def _annuity_paid_years(session: Session, project_id: int) -> list[int]:
@@ -327,6 +384,7 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         parent_priority_dates=parent_priority_dates_raw,
         grant_date=grant_date,
         annuity_paid_years=annuity_paid_years_raw,
+        is_annuity_transferred=project.annuity_transferred_at is not None,
     )
     due_action = next_action.message if next_action else None
     action_due_date = next_action.due_date if next_action else None
@@ -1333,6 +1391,17 @@ def get_annuity_summary(session: Session, project_id: int) -> PatentAnnuitySumma
             next_year = min(accumulated)
             next_due_date = annuity.post_grant_payment_deadline(grant_date)
 
+    is_transferred = project.annuity_transferred_at is not None
+    if is_transferred:
+        # Case is locked: no further reminder of any kind, ever, regardless
+        # of what's paid. Schedule/payment history stay visible (still a
+        # useful historical record), only the "what's due next" signals
+        # are suppressed.
+        next_year = None
+        next_due_date = None
+        is_post_grant_pending = False
+        accumulated_unpaid = []
+
     return PatentAnnuitySummary(
         filing_date=filing_date,
         grant_date=grant_date,
@@ -1342,11 +1411,14 @@ def get_annuity_summary(session: Session, project_id: int) -> PatentAnnuitySumma
         paid_years=paid_years,
         paid_till_year=paid_till_yr,
         paid_till_date=paid_till_dt,
-        next_due_year=next_year if next_year <= annuity.LAST_RENEWAL_YEAR else None,
+        next_due_year=(next_year if next_year and next_year <= annuity.LAST_RENEWAL_YEAR else None),
         next_due_date=next_due_date,
         is_post_grant_deadline_pending=is_post_grant_pending,
         accumulated_unpaid_years=accumulated_unpaid,
         orphaned_paid_years=annuity.orphaned_paid_years(paid_years),
+        is_transferred=is_transferred,
+        transferred_at=project.annuity_transferred_at,
+        transferred_comment=project.annuity_transferred_comment,
     )
 
 
@@ -1356,6 +1428,8 @@ def record_annuity_payment(
     project = session.get(PatentProject, project_id)
     if not project:
         return None
+    if project.annuity_transferred_at is not None:
+        raise ValueError("This docket's annuity case has been marked transferred; no further payments can be recorded")
     if not project.in_application_date:
         raise ValueError("Filing (IN application) date is required before recording an annuity payment")
 
@@ -1390,6 +1464,28 @@ def record_annuity_payment(
         if next_year <= annuity.LAST_RENEWAL_YEAR
         else None
     )
+    project.modified_date = datetime.utcnow()
+    session.add(project)
+    session.commit()
+
+    return get_annuity_summary(session, project_id)
+
+
+def transfer_annuity_case(
+    session: Session, project_id: int, payload: PatentAnnuityTransferInput
+) -> PatentAnnuitySummary | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    if project.annuity_transferred_at is not None:
+        raise ValueError("This docket's annuity case is already marked transferred")
+
+    comment = payload.comment.strip()
+    if not comment:
+        raise ValueError("A comment is required to mark the annuity case as transferred")
+
+    project.annuity_transferred_at = datetime.utcnow()
+    project.annuity_transferred_comment = comment
     project.modified_date = datetime.utcnow()
     session.add(project)
     session.commit()
