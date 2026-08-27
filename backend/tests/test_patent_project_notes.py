@@ -3,7 +3,7 @@
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.patents.schemas import PatentProjectCreate, PatentProjectNoteInput
-from app.patents.service import add_project_note, create_project, get_project
+from app.patents.service import add_project_note, create_project, get_project, update_project_note
 
 import pytest
 
@@ -69,3 +69,69 @@ def test_blank_note_is_rejected():
 def test_add_note_to_missing_project_returns_none():
     with _make_session() as session:
         assert add_project_note(session, 9999, PatentProjectNoteInput(note_text="x")) is None
+
+
+def test_update_project_note_changes_its_text_in_place():
+    with _make_session() as session:
+        project = _create_project(session)
+        add_project_note(session, project["id"], PatentProjectNoteInput(note_text="Original text"))
+        note_id = get_project(session, project["id"])["notes"][0]["id"]
+
+        notes = update_project_note(
+            session, project["id"], note_id, PatentProjectNoteInput(note_text="Corrected text")
+        )
+        assert len(notes) == 1
+        assert notes[0].id == note_id
+        assert notes[0].note_text == "Corrected text"
+
+
+def test_update_project_note_does_not_change_note_count_or_order():
+    with _make_session() as session:
+        project = _create_project(session)
+        add_project_note(session, project["id"], PatentProjectNoteInput(note_text="First"))
+        add_project_note(session, project["id"], PatentProjectNoteInput(note_text="Second"))
+        oldest_note_id = get_project(session, project["id"])["notes"][1]["id"]
+
+        notes = update_project_note(
+            session, project["id"], oldest_note_id, PatentProjectNoteInput(note_text="First, edited")
+        )
+        assert [n.note_text for n in notes] == ["Second", "First, edited"]
+
+
+def test_update_rejects_blank_text():
+    with _make_session() as session:
+        project = _create_project(session)
+        add_project_note(session, project["id"], PatentProjectNoteInput(note_text="Original"))
+        note_id = get_project(session, project["id"])["notes"][0]["id"]
+
+        with pytest.raises(ValueError):
+            update_project_note(session, project["id"], note_id, PatentProjectNoteInput(note_text="   "))
+
+
+def test_update_missing_note_returns_none():
+    with _make_session() as session:
+        project = _create_project(session)
+        assert update_project_note(session, project["id"], 9999, PatentProjectNoteInput(note_text="x")) is None
+
+
+def test_update_note_belonging_to_another_project_returns_none():
+    with _make_session() as session:
+        project_a = _create_project(session)
+        project_b = create_project(
+            session,
+            PatentProjectCreate(
+                project_mode="draft",
+                application_type="Convention",
+                docket_no="NOTE-2",
+                applicant_name="Other Corp",
+            ),
+        )
+        add_project_note(session, project_a["id"], PatentProjectNoteInput(note_text="Belongs to A"))
+        note_id = get_project(session, project_a["id"])["notes"][0]["id"]
+
+        assert update_project_note(session, project_b["id"], note_id, PatentProjectNoteInput(note_text="x")) is None
+
+
+def test_update_missing_project_returns_none():
+    with _make_session() as session:
+        assert update_project_note(session, 9999, 1, PatentProjectNoteInput(note_text="x")) is None

@@ -329,6 +329,27 @@ def add_project_note(
     ]
 
 
+def update_project_note(
+    session: Session, project_id: int, note_id: int, payload: PatentProjectNoteInput
+) -> list[PatentProjectNoteRead] | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    note = session.get(PatentProjectNote, note_id)
+    if not note or note.project_id != project_id:
+        return None
+    note_text = payload.note_text.strip()
+    if not note_text:
+        raise ValueError("Note text is required")
+    note.note_text = note_text
+    session.add(note)
+    session.commit()
+    return [
+        PatentProjectNoteRead(id=n.id, note_text=n.note_text, created_date=n.created_date)
+        for n in _project_notes(session, project_id)
+    ]
+
+
 def _annuity_paid_years(session: Session, project_id: int) -> list[int]:
     payment_ids = session.exec(
         select(PatentAnnuityPayment.id).where(PatentAnnuityPayment.project_id == project_id)
