@@ -735,6 +735,30 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_annuity_payment (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    payment_date DATE NOT NULL,
+                    total_fee INTEGER NOT NULL,
+                    created_date TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_annuity_payment_year (
+                    id SERIAL PRIMARY KEY,
+                    payment_id INTEGER NOT NULL REFERENCES patent_annuity_payment(id),
+                    renewal_year INTEGER NOT NULL
+                );
+                """
+            )
+        )
         return
 
     if _sqlite_column_exists(conn, "patent_project", "id"):
@@ -789,6 +813,30 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 name TEXT NOT NULL,
                 country TEXT,
                 address TEXT
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_annuity_payment (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                payment_date DATE NOT NULL,
+                total_fee INTEGER NOT NULL,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_annuity_payment_year (
+                id INTEGER PRIMARY KEY,
+                payment_id INTEGER NOT NULL REFERENCES patent_annuity_payment(id),
+                renewal_year INTEGER NOT NULL
             );
             """
         )

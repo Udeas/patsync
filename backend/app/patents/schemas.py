@@ -279,3 +279,40 @@ class PatentClientUpdate(SQLModel):
     email: Optional[str] = None
     key_contacts: list[str] = Field(default_factory=list)
     docketing_email: Optional[str] = None
+
+
+class PatentAnnuityPaymentInput(SQLModel):
+    payment_date: date
+    years: list[int] = Field(min_length=1)
+
+
+class PatentAnnuityPaymentRead(SQLModel):
+    id: int
+    payment_date: date
+    total_fee: int
+    years: list[int] = Field(default_factory=list)
+    years_label: str = ""
+
+
+class PatentAnnuityScheduleRow(SQLModel):
+    year: int
+    due_date: date
+    fee: int
+    status: Literal["paid", "unpaid"]
+    payment_id: Optional[int] = None
+
+
+class PatentAnnuitySummary(SQLModel):
+    filing_date: Optional[date] = None
+    grant_date: Optional[date] = None
+    fee_category: str = "standard"
+    schedule: list[PatentAnnuityScheduleRow] = Field(default_factory=list)
+    payments: list[PatentAnnuityPaymentRead] = Field(default_factory=list)
+    paid_years: list[int] = Field(default_factory=list)
+    paid_till_year: Optional[int] = None
+    paid_till_date: Optional[date] = None
+    next_due_year: Optional[int] = None
+    next_due_date: Optional[date] = None
+    is_post_grant_deadline_pending: bool = False
+    accumulated_unpaid_years: list[int] = Field(default_factory=list)
+    orphaned_paid_years: list[int] = Field(default_factory=list)

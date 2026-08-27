@@ -9,6 +9,8 @@ from .schemas import (
     PatentAgentInput,
     PatentAgentRead,
     PatentAgentUpdate,
+    PatentAnnuityPaymentInput,
+    PatentAnnuitySummary,
     PatentClientInput,
     PatentClientRead,
     PatentClientUpdate,
@@ -27,10 +29,12 @@ from .service import (
     create_project,
     delete_patent_agent,
     delete_patent_client,
+    get_annuity_summary,
     get_project,
     list_patent_agents,
     list_patent_clients,
     list_projects,
+    record_annuity_payment,
     update_project,
     update_project_detail,
     update_patent_agent,
@@ -131,6 +135,29 @@ def archive_project_endpoint(project_id: int, session: Session = Depends(get_ses
     if not project:
         raise HTTPException(status_code=404, detail="Patent project not found")
     return project
+
+
+@router.get("/projects/{project_id}/annuity", response_model=PatentAnnuitySummary)
+def get_annuity_summary_endpoint(project_id: int, session: Session = Depends(get_session)):
+    summary = get_annuity_summary(session, project_id)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Patent project not found")
+    return summary
+
+
+@router.post("/projects/{project_id}/annuity/payments", response_model=PatentAnnuitySummary)
+def record_annuity_payment_endpoint(
+    project_id: int,
+    payload: PatentAnnuityPaymentInput,
+    session: Session = Depends(get_session),
+):
+    try:
+        summary = record_annuity_payment(session, project_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Patent project not found")
+    return summary
 
 
 @router.get("/clients", response_model=list[PatentClientRead])
