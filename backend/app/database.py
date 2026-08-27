@@ -678,6 +678,22 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             )
         if not _postgres_column_exists(conn, "patent_project", "abandon_reason"):
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN abandon_reason TEXT"))
+        if not _postgres_column_exists(conn, "patent_project", "parent_project_id"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN parent_project_id INTEGER REFERENCES patent_project(id)"
+                )
+            )
+        if not _postgres_column_exists(conn, "patent_project", "parent_application_no"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_application_no VARCHAR"))
+        if not _postgres_column_exists(conn, "patent_project", "parent_application_date"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_application_date DATE"))
+        if not _postgres_column_exists(conn, "patent_project", "grant_number"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN grant_number VARCHAR"))
+        if not _postgres_column_exists(conn, "patent_project", "annuity_paid_upto"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_paid_upto DATE"))
+        if not _postgres_column_exists(conn, "patent_project", "next_annuity_due"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN next_annuity_due DATE"))
         conn.execute(
             text(
                 """
@@ -740,6 +756,18 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             )
         if not _sqlite_column_exists(conn, "patent_project", "abandon_reason"):
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN abandon_reason TEXT"))
+        if not _sqlite_column_exists(conn, "patent_project", "parent_project_id"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_project_id INTEGER REFERENCES patent_project(id)"))
+        if not _sqlite_column_exists(conn, "patent_project", "parent_application_no"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_application_no TEXT"))
+        if not _sqlite_column_exists(conn, "patent_project", "parent_application_date"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_application_date DATE"))
+        if not _sqlite_column_exists(conn, "patent_project", "grant_number"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN grant_number TEXT"))
+        if not _sqlite_column_exists(conn, "patent_project", "annuity_paid_upto"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_paid_upto DATE"))
+        if not _sqlite_column_exists(conn, "patent_project", "next_annuity_due"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN next_annuity_due DATE"))
     conn.execute(
         text(
             """

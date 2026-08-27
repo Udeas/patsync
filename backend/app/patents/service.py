@@ -17,7 +17,7 @@ from .models import (
     PatentProject,
     PatentStatusEvent,
 )
-from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, status_label
+from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, STATUS_ID_GRANTED, status_label
 from .reminders import compute_next_patent_action
 from .patent_status_catalog import ALL_STATUS_IDS
 from app.audit.service import record_status_change
@@ -34,7 +34,13 @@ from .schemas import (
     PatentProjectDetailUpdate,
     PatentProjectUpdate,
 )
-from .validators import parse_in_application_number, validate_create_project_filing_windows
+from .validators import (
+    DIVISIONAL_APPLICATION_TYPES,
+    PATENT_OF_ADDITION_APPLICATION_TYPES,
+    parse_in_application_number,
+    validate_create_project_filing_windows,
+    validate_divisional_parent_application,
+)
 from .workflow import derive_current_status, validate_timeline_updates
 
 
@@ -170,6 +176,9 @@ def _build_relations_dict(
     status_events,
     attorney,
     client,
+    parent_docket_no=None,
+    parent_client_docket_no=None,
+    parent_priority_dates=(),
 ) -> dict:
     return {
         "applicants": [
@@ -202,7 +211,10 @@ def _build_relations_dict(
         ],
         "attorney": attorney,
         "client": client,
+        "parent_docket_no": parent_docket_no,
+        "parent_client_docket_no": parent_client_docket_no,
         "_status_events_raw": status_events,
+        "_parent_priority_dates_raw": list(parent_priority_dates),
     }
 
 
@@ -247,6 +259,16 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         else None
     )
 
+    parent_docket_no = None
+    parent_client_docket_no = None
+    parent_priority_dates: list = []
+    if project.parent_project_id:
+        parent = session.get(PatentProject, project.parent_project_id)
+        if parent:
+            parent_docket_no = parent.docket_no
+            parent_client_docket_no = parent.client_docket_no
+            parent_priority_dates = _parent_priority_dates(session, project)
+
     return _build_relations_dict(
         applicants=applicants,
         inventors=inventors,
@@ -255,12 +277,16 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         status_events=status_events,
         attorney=attorney,
         client=client,
+        parent_docket_no=parent_docket_no,
+        parent_client_docket_no=parent_client_docket_no,
+        parent_priority_dates=parent_priority_dates,
     )
 
 
 def _assemble_response(project: PatentProject, relations: dict) -> dict:
     relations = dict(relations)
     status_events_raw = relations.pop("_status_events_raw")
+    parent_priority_dates_raw = relations.pop("_parent_priority_dates_raw", [])
     filled_status = {event.status_id: event.status_date for event in status_events_raw}
     current_status = derive_current_status(filled_status)
     priority_dates = [
@@ -272,6 +298,9 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         in_application_date=project.in_application_date,
         priority_dates=priority_dates,
         provisional_kind=project.provisional_kind,
+        application_type=project.application_type,
+        parent_application_date=project.parent_application_date,
+        parent_priority_dates=parent_priority_dates_raw,
     )
     due_action = next_action.message if next_action else None
     action_due_date = next_action.due_date if next_action else None
@@ -289,6 +318,13 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         "application_type": project.application_type,
         "provisional_kind": project.provisional_kind,
         "pct_wipo_filed_only": project.pct_wipo_filed_only,
+        "parent_project_id": project.parent_project_id,
+        "parent_application_no": project.parent_application_no,
+        "parent_application_date": project.parent_application_date,
+        "parent_priority_dates": parent_priority_dates_raw,
+        "grant_number": project.grant_number,
+        "annuity_paid_upto": project.annuity_paid_upto,
+        "next_annuity_due": project.next_annuity_due,
         "is_archived": project.is_archived,
         "client_docket_no": project.client_docket_no,
         "abandon_reason": project.abandon_reason,
@@ -302,6 +338,17 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
 
 def _project_to_response(session: Session, project: PatentProject) -> dict:
     return _assemble_response(project, _load_project_relations(session, project))
+
+
+def _parent_priority_dates(session: Session, project: PatentProject) -> list:
+    if not project.parent_project_id:
+        return []
+    return [
+        p.priority_application_date
+        for p in session.exec(
+            select(PatentPriority).where(PatentPriority.project_id == project.parent_project_id)
+        ).all()
+    ]
 
 
 def _validate_in_number_date_year_match(in_application_no: str | None, in_application_date) -> None:
@@ -391,9 +438,11 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
 
     if payload.in_application_no:
         parse_in_application_number(payload.in_application_no)
-    _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
+    if (payload.application_type or "").strip() not in DIVISIONAL_APPLICATION_TYPES:
+        _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
 
     validate_create_project_filing_windows(payload)
+    validate_divisional_parent_application(payload)
 
     source_applicants = payload.applicants
     if not source_applicants:
@@ -429,6 +478,12 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
         attorney_id=payload.attorney_id,
         client_id=payload.client_id,
         client_docket_no=payload.client_docket_no,
+        parent_project_id=payload.parent_project_id,
+        parent_application_no=payload.parent_application_no,
+        parent_application_date=payload.parent_application_date,
+        grant_number=payload.grant_number,
+        annuity_paid_upto=payload.annuity_paid_upto,
+        next_annuity_due=payload.next_annuity_due,
     )
     session.add(project)
     session.flush()
@@ -526,6 +581,22 @@ def _load_relations_bulk(
         ).all()
     )
 
+    parent_ids = {project.parent_project_id for project in projects if project.parent_project_id}
+    parents_by_id: dict[int, PatentProject] = {}
+    if parent_ids:
+        for parent in session.exec(
+            select(PatentProject).where(PatentProject.id.in_(parent_ids))
+        ).all():
+            parents_by_id[parent.id] = parent
+
+    parent_priorities_by = _grouped(
+        session.exec(
+            select(PatentPriority).where(PatentPriority.project_id.in_(parent_ids))
+        ).all()
+        if parent_ids
+        else []
+    )
+
     attorney_ids = {project.attorney_id for project in projects if project.attorney_id}
     agents_by_id: dict[int, dict | None] = {}
     if attorney_ids:
@@ -544,6 +615,7 @@ def _load_relations_bulk(
 
     relations_by_project: dict[int, dict] = {}
     for project in projects:
+        parent = parents_by_id.get(project.parent_project_id) if project.parent_project_id else None
         relations_by_project[project.id] = _build_relations_dict(
             applicants=applicants_by.get(project.id, []),
             inventors=inventors_by.get(project.id, []),
@@ -552,6 +624,13 @@ def _load_relations_bulk(
             status_events=status_events_by.get(project.id, []),
             attorney=agents_by_id.get(project.attorney_id) if project.attorney_id else None,
             client=clients_by_id.get(project.client_id) if project.client_id else None,
+            parent_docket_no=parent.docket_no if parent else None,
+            parent_client_docket_no=parent.client_docket_no if parent else None,
+            parent_priority_dates=(
+                [p.priority_application_date for p in parent_priorities_by.get(parent.id, [])]
+                if parent
+                else []
+            ),
         )
     return relations_by_project
 
@@ -632,7 +711,9 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
         raise ValueError("IN application number is required for final projects")
     if payload.project_mode == "final" and not payload.in_application_date:
         raise ValueError("IN application date is required for final projects")
-    _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
+    effective_application_type = (payload.application_type or project.application_type or "").strip()
+    if effective_application_type not in DIVISIONAL_APPLICATION_TYPES:
+        _validate_in_number_date_year_match(payload.in_application_no, payload.in_application_date)
 
     existing_applicants = session.exec(
         select(PatentApplicant).where(PatentApplicant.project_id == project_id)
@@ -678,28 +759,31 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
         applicants=effective_applicants,
         inventors=effective_inventors,
     )
-    validate_create_project_filing_windows(
-        PatentProjectCreate(
-            project_mode=payload.project_mode or project.project_mode,
-            application_type=payload.application_type or project.application_type or "",
-            docket_no=payload.docket_no,
-            in_application_no=payload.in_application_no,
-            in_application_date=payload.in_application_date,
-            applicant_name=payload.applicant_name,
-            applicant_country=payload.applicant_country,
-            applicant_address=payload.applicant_address,
-            applicants=payload.applicants or [],
-            application_title=payload.application_title,
-            attorney_id=payload.attorney_id,
-            client_id=payload.client_id,
-            client_docket_no=payload.client_docket_no,
-            provisional_kind=payload.provisional_kind,
-            pct_wipo_filed_only=payload.pct_wipo_filed_only if payload.pct_wipo_filed_only is not None else project.pct_wipo_filed_only,
-            inventors=payload.inventors or [],
-            priorities=effective_priorities,
-            international_applications=effective_international,
-        )
+    effective_validation_payload = PatentProjectCreate(
+        project_mode=payload.project_mode or project.project_mode,
+        application_type=payload.application_type or project.application_type or "",
+        docket_no=payload.docket_no,
+        in_application_no=payload.in_application_no,
+        in_application_date=payload.in_application_date,
+        applicant_name=payload.applicant_name,
+        applicant_country=payload.applicant_country,
+        applicant_address=payload.applicant_address,
+        applicants=payload.applicants or [],
+        application_title=payload.application_title,
+        attorney_id=payload.attorney_id,
+        client_id=payload.client_id,
+        client_docket_no=payload.client_docket_no,
+        provisional_kind=payload.provisional_kind,
+        pct_wipo_filed_only=payload.pct_wipo_filed_only if payload.pct_wipo_filed_only is not None else project.pct_wipo_filed_only,
+        inventors=payload.inventors or [],
+        priorities=effective_priorities,
+        international_applications=effective_international,
+        parent_project_id=payload.parent_project_id if payload.parent_project_id is not None else project.parent_project_id,
+        parent_application_no=payload.parent_application_no if payload.parent_application_no is not None else project.parent_application_no,
+        parent_application_date=payload.parent_application_date if payload.parent_application_date is not None else project.parent_application_date,
     )
+    validate_create_project_filing_windows(effective_validation_payload)
+    validate_divisional_parent_application(effective_validation_payload)
 
     project.docket_no = payload.docket_no
     if payload.project_mode:
@@ -718,6 +802,18 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
         project.provisional_kind = payload.provisional_kind
     if payload.pct_wipo_filed_only is not None:
         project.pct_wipo_filed_only = payload.pct_wipo_filed_only
+    if payload.parent_project_id is not None:
+        project.parent_project_id = payload.parent_project_id
+    if payload.parent_application_no is not None:
+        project.parent_application_no = payload.parent_application_no
+    if payload.parent_application_date is not None:
+        project.parent_application_date = payload.parent_application_date
+    if payload.grant_number is not None:
+        project.grant_number = payload.grant_number
+    if payload.annuity_paid_upto is not None:
+        project.annuity_paid_upto = payload.annuity_paid_upto
+    if payload.next_annuity_due is not None:
+        project.next_annuity_due = payload.next_annuity_due
 
     if payload.applicants is not None:
         existing_applicants = session.exec(
@@ -845,6 +941,13 @@ def update_project_detail(
         if status_id not in ALL_STATUS_IDS:
             raise ValueError(f"Invalid status id: {status_id}")
 
+    granted_item = next(
+        (item for item in detail_update.timeline_updates if item.status_id == STATUS_ID_GRANTED),
+        None,
+    )
+    if granted_item and granted_item.status_date and not (project.grant_number or "").strip():
+        raise ValueError("Grant number is required once Grant date is set")
+
     priorities = session.exec(
         select(PatentPriority).where(PatentPriority.project_id == project_id)
     ).all()
@@ -853,6 +956,10 @@ def update_project_detail(
         requires_non_provisional=project.provisional_kind == "OP",
         in_application_date=project.in_application_date,
         priority_dates=[p.priority_application_date for p in priorities],
+        is_divisional=(project.application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES,
+        is_patent_of_addition=(project.application_type or "").strip() in PATENT_OF_ADDITION_APPLICATION_TYPES,
+        parent_application_date=project.parent_application_date,
+        parent_priority_dates=_parent_priority_dates(session, project),
     )
 
     existing_events = session.exec(
@@ -902,6 +1009,9 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
             raise ValueError("Abandon reason is required.")
         project.abandon_reason = reason
 
+    if status_id == STATUS_ID_GRANTED and status_date and not (project.grant_number or "").strip():
+        raise ValueError("Grant number is required once Grant date is set")
+
     events = session.exec(
         select(PatentStatusEvent).where(PatentStatusEvent.project_id == project_id)
     ).all()
@@ -915,6 +1025,10 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
         requires_non_provisional=project.provisional_kind == "OP",
         in_application_date=project.in_application_date,
         priority_dates=[p.priority_application_date for p in priorities],
+        is_divisional=(project.application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES,
+        is_patent_of_addition=(project.application_type or "").strip() in PATENT_OF_ADDITION_APPLICATION_TYPES,
+        parent_application_date=project.parent_application_date,
+        parent_priority_dates=_parent_priority_dates(session, project),
     )
 
     existing = session.exec(

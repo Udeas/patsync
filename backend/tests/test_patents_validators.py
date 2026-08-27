@@ -24,6 +24,8 @@ from app.patents.validators import (
 
     validate_create_project_filing_windows,
 
+    validate_divisional_parent_application,
+
     validate_in_application_date_for_draft,
 
     validate_in_within_months_of_anchor,
@@ -236,7 +238,9 @@ def test_pct_wipo_off_requires_convention_and_intl_rows():
 
 
 
-def test_pct_wipo_off_validates_in_against_intl_not_priority():
+def test_pct_wipo_off_validates_in_against_priority_not_intl():
+    # priority date within 31 months of IN date, intl date far outside the
+    # window - must still pass, since priority governs whenever present.
 
     validate_create_project_filing_windows(
 
@@ -260,11 +264,11 @@ def test_pct_wipo_off_validates_in_against_intl_not_priority():
 
                     priority_application_no="US123",
 
-                    priority_application_date=date(2020, 1, 1),
+                    priority_application_date=date(2023, 8, 1),
 
                     country="US",
 
-                    title="Old priority",
+                    title="Priority",
 
                 )
 
@@ -276,7 +280,7 @@ def test_pct_wipo_off_validates_in_against_intl_not_priority():
 
                     international_application_no="PCT/US2024/123456",
 
-                    international_application_date=date(2025, 8, 1),
+                    international_application_date=date(2020, 1, 1),
 
                 )
 
@@ -288,6 +292,36 @@ def test_pct_wipo_off_validates_in_against_intl_not_priority():
 
 
 
+
+
+def test_pct_rejects_in_beyond_thirty_one_months_from_priority_even_if_intl_is_within_window():
+    # priority date beyond 31 months from IN date must still fail even
+    # though the intl/PCT date alone would be within the 31-month window.
+    with pytest.raises(ValueError, match="31 months"):
+        validate_create_project_filing_windows(
+            PatentProjectCreate(
+                project_mode="final",
+                application_type="PCT National Phase Entry",
+                docket_no="P-2b",
+                in_application_date=date(2026, 2, 1),
+                applicant_name="Test",
+                pct_wipo_filed_only=False,
+                priorities=[
+                    PatentPriorityInput(
+                        priority_application_no="US123",
+                        priority_application_date=date(2020, 1, 1),
+                        country="US",
+                        title="Old priority",
+                    )
+                ],
+                international_applications=[
+                    PatentInternationalInput(
+                        international_application_no="PCT/US2024/123456",
+                        international_application_date=date(2025, 8, 1),
+                    )
+                ],
+            )
+        )
 
 
 def test_pct_wipo_on_rejects_convention_priorities():
@@ -461,5 +495,92 @@ def test_validate_in_application_date_draft_requires_current_date():
             current_date=date(2026, 5, 2),
 
         )
+
+
+@pytest.mark.parametrize(
+    "application_type",
+    ["Ordinary Divisional", "Convention divisional", "PCT National Phase Entry - Divisional"],
+)
+def test_divisional_types_skip_filing_window_and_priority_requirement(application_type: str):
+    # No priority rows, no international rows, IN date far outside any window -
+    # would raise for non-divisional Convention/PCT types, but must pass here.
+    validate_create_project_filing_windows(
+        PatentProjectCreate(
+            project_mode="final",
+            application_type=application_type,
+            docket_no="DIV-1",
+            in_application_date=date(2026, 6, 1),
+            applicant_name="Test",
+            priorities=[],
+            international_applications=[],
+        )
+    )
+
+
+def test_non_divisional_types_still_enforce_filing_window():
+    with pytest.raises(ValueError, match="conventional priority"):
+        validate_create_project_filing_windows(
+            PatentProjectCreate(
+                project_mode="final",
+                application_type="Convention",
+                docket_no="NONDIV-1",
+                in_application_date=date(2026, 6, 1),
+                applicant_name="Test",
+                priorities=[],
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "application_type",
+    ["Ordinary Divisional", "Convention divisional", "PCT National Phase Entry - Divisional"],
+)
+def test_divisional_final_docket_requires_parent_application_data(application_type: str):
+    with pytest.raises(ValueError, match="Parent application"):
+        validate_divisional_parent_application(
+            PatentProjectCreate(
+                project_mode="final",
+                application_type=application_type,
+                docket_no="DIV-2",
+                applicant_name="Test",
+                parent_application_no=None,
+                parent_application_date=None,
+            )
+        )
+
+
+def test_divisional_final_docket_accepts_when_parent_application_data_present():
+    validate_divisional_parent_application(
+        PatentProjectCreate(
+            project_mode="final",
+            application_type="Ordinary Divisional",
+            docket_no="DIV-3",
+            applicant_name="Test",
+            parent_application_no="202312000001",
+            parent_application_date=date(2023, 1, 1),
+        )
+    )
+
+
+def test_divisional_draft_docket_does_not_require_parent_application_data():
+    validate_divisional_parent_application(
+        PatentProjectCreate(
+            project_mode="draft",
+            application_type="Ordinary Divisional",
+            docket_no="DIV-4",
+            applicant_name="Test",
+        )
+    )
+
+
+def test_non_divisional_final_docket_not_subject_to_parent_application_requirement():
+    validate_divisional_parent_application(
+        PatentProjectCreate(
+            project_mode="final",
+            application_type="Convention",
+            docket_no="NONDIV-2",
+            applicant_name="Test",
+        )
+    )
 
 
