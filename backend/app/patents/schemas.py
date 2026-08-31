@@ -268,6 +268,7 @@ class PatentClientInput(SQLModel):
     email: Optional[str] = None
     key_contacts: list[str] = Field(default_factory=list)
     docketing_email: Optional[str] = None
+    client_types: list[str] = Field(default_factory=list)
 
 
 class PatentClientRead(SQLModel):
@@ -278,6 +279,7 @@ class PatentClientRead(SQLModel):
     email: Optional[str] = None
     key_contacts: list[str] = Field(default_factory=list)
     docketing_email: Optional[str] = None
+    client_types: list[str] = Field(default_factory=list)
 
 
 class PatentClientUpdate(SQLModel):
@@ -287,6 +289,7 @@ class PatentClientUpdate(SQLModel):
     email: Optional[str] = None
     key_contacts: list[str] = Field(default_factory=list)
     docketing_email: Optional[str] = None
+    client_types: list[str] = Field(default_factory=list)
 
 
 class PatentAnnuityPaymentInput(SQLModel):

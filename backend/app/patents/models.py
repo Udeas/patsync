@@ -140,6 +140,7 @@ class PatentClient(SQLModel, table=True):
     email: Optional[str] = Field(default=None)
     key_contacts: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     docketing_email: Optional[str] = Field(default=None)
+    client_types: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
 
 class PatentAgent(SQLModel, table=True):

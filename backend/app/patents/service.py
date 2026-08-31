@@ -1165,6 +1165,17 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
     return _project_to_response(session, project)
 
 
+VALID_CLIENT_TYPES = {"patent", "trademark", "design"}
+
+
+def _validate_client_types(client_types: list[str]) -> None:
+    if not client_types:
+        raise ValueError("Select at least one client type")
+    unknown = set(client_types) - VALID_CLIENT_TYPES
+    if unknown:
+        raise ValueError(f"Unknown client type(s): {', '.join(sorted(unknown))}")
+
+
 def list_patent_clients(session: Session) -> list[dict]:
     clients = session.exec(select(PatentClient).order_by(PatentClient.name.asc())).all()
     out: list[dict] = []
@@ -1178,12 +1189,14 @@ def list_patent_clients(session: Session) -> list[dict]:
                 "email": client.email,
                 "key_contacts": json.loads(client.key_contacts or "[]"),
                 "docketing_email": client.docketing_email,
+                "client_types": json.loads(client.client_types or "[]"),
             }
         )
     return out
 
 
 def create_patent_client(session: Session, payload: PatentClientInput) -> dict:
+    _validate_client_types(payload.client_types)
     existing = session.exec(
         select(PatentClient).where(PatentClient.client_code == payload.client_code.upper())
     ).first()
@@ -1196,6 +1209,7 @@ def create_patent_client(session: Session, payload: PatentClientInput) -> dict:
         email=payload.email,
         key_contacts=json.dumps(payload.key_contacts),
         docketing_email=payload.docketing_email,
+        client_types=json.dumps(payload.client_types),
     )
     session.add(client)
     session.commit()
@@ -1208,6 +1222,7 @@ def create_patent_client(session: Session, payload: PatentClientInput) -> dict:
         "email": client.email,
         "key_contacts": payload.key_contacts,
         "docketing_email": client.docketing_email,
+        "client_types": payload.client_types,
     }
 
 
@@ -1231,6 +1246,8 @@ def update_patent_client(session: Session, client_id: int, payload: PatentClient
     if not client:
         return None
 
+    _validate_client_types(payload.client_types)
+
     normalized_code = payload.client_code.upper()
     existing = session.exec(
         select(PatentClient).where(PatentClient.client_code == normalized_code)
@@ -1244,6 +1261,7 @@ def update_patent_client(session: Session, client_id: int, payload: PatentClient
     client.email = payload.email
     client.key_contacts = json.dumps(payload.key_contacts)
     client.docketing_email = payload.docketing_email
+    client.client_types = json.dumps(payload.client_types)
     session.add(client)
     session.commit()
     session.refresh(client)
@@ -1255,6 +1273,7 @@ def update_patent_client(session: Session, client_id: int, payload: PatentClient
         "email": client.email,
         "key_contacts": payload.key_contacts,
         "docketing_email": client.docketing_email,
+        "client_types": payload.client_types,
     }
 
 

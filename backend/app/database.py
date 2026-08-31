@@ -698,6 +698,13 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_at TIMESTAMPTZ"))
         if not _postgres_column_exists(conn, "patent_project", "annuity_transferred_comment"):
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_comment TEXT"))
+        if not _postgres_column_exists(conn, "patent_client", "client_types"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_client ADD COLUMN client_types TEXT "
+                    "DEFAULT '[\"patent\",\"trademark\",\"design\"]'"
+                )
+            )
         conn.execute(
             text(
                 """
@@ -812,6 +819,13 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_at TIMESTAMP"))
         if not _sqlite_column_exists(conn, "patent_project", "annuity_transferred_comment"):
             conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_comment TEXT"))
+        if not _sqlite_column_exists(conn, "patent_client", "client_types"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_client ADD COLUMN client_types TEXT "
+                    "DEFAULT '[\"patent\",\"trademark\",\"design\"]'"
+                )
+            )
     conn.execute(
         text(
             """
