@@ -265,6 +265,22 @@ def test_transfer_suppresses_due_action_on_the_project_response():
         assert row["action_due_date"] is None
 
 
+def test_project_response_exposes_is_annuity_transferred():
+    with _make_session() as session:
+        project = _create_e17_06in(session)
+        _grant(session, project["id"])
+
+        row = get_project(session, project["id"])
+        assert row is not None
+        assert row["is_annuity_transferred"] is False
+
+        transfer_annuity_case(session, project["id"], PatentAnnuityTransferInput(comment="Transferred"))
+
+        row = get_project(session, project["id"])
+        assert row is not None
+        assert row["is_annuity_transferred"] is True
+
+
 def test_transfer_requires_a_comment():
     with _make_session() as session:
         project = _create_e17_06in(session)

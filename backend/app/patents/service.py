@@ -409,6 +409,7 @@ def _assemble_response(project: PatentProject, relations: dict) -> dict:
         "grant_number": project.grant_number,
         "annuity_paid_upto": project.annuity_paid_upto,
         "next_annuity_due": project.next_annuity_due,
+        "is_annuity_transferred": project.annuity_transferred_at is not None,
         "is_archived": project.is_archived,
         "client_docket_no": project.client_docket_no,
         "abandon_reason": project.abandon_reason,

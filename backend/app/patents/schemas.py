@@ -158,6 +158,7 @@ class PatentProjectRead(SQLModel):
     grant_number: Optional[str] = None
     annuity_paid_upto: Optional[date] = None
     next_annuity_due: Optional[date] = None
+    is_annuity_transferred: bool = False
     current_status_id: Optional[int] = None
     current_status_date: Optional[date] = None
     due_action: Optional[str] = None
