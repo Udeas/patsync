@@ -6,7 +6,7 @@ Acceptance criteria covered:
   Form 3 2027-03-03, priority-document target 2026-12-03)
 - provisional project creates none of these items
 - PCT national phase project claiming priority gets a priority-document item too
-- entering FER date creates exactly one "File updated Form 3" item; correcting
+- entering FER date creates exactly one "Form 3 with FER compliance" item; correcting
   it updates the due date without creating a second one
 - idempotency on repeated project saves
 """

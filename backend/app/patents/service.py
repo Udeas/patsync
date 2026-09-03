@@ -561,9 +561,15 @@ def upsert_form3_updated_entry(session: Session, project_id: int, fer_date) -> N
         )
     ).first()
     if existing:
-        if existing.due_date == plan.due_date:
+        if (
+            existing.due_date == plan.due_date
+            and existing.title == plan.title
+            and existing.rule_reference == plan.rule_reference
+        ):
             return
         existing.due_date = plan.due_date
+        existing.title = plan.title
+        existing.rule_reference = plan.rule_reference
         session.add(existing)
         write_audit(
             session,

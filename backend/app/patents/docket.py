@@ -46,7 +46,7 @@ _ITEM_META: dict[str, tuple[str, str]] = {
     ITEM_PRIORITY_DOCUMENT: ("Priority document", "Section 138(1) / Rule 21 (internal target)"),
     ITEM_POA: ("Power of Attorney (Form 26)", "Rule 135(1)"),
     ITEM_FORM3_FIRST: ("First Form 3 (foreign-filing statement)", "Rule 12(1A)"),
-    ITEM_FORM3_UPDATED: ("File updated Form 3", "Rule 12(2)"),
+    ITEM_FORM3_UPDATED: ("Form 3 with FER compliance", "Rule 12(2)"),
 }
 
 
