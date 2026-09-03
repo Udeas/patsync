@@ -10,16 +10,26 @@ from app.schemas.trademark import (
     TmApplicationStatusUpdate,
     TmApplicationTimelineRead,
     TmApplicationUpdate,
+    TmCustomEventClose,
+    TmCustomEventCreate,
+    TmCustomEventRead,
     TmProjectDetailRead,
     TmProjectDetailUpdate,
+    TmProjectNoteInput,
+    TmProjectNoteRead,
 )
 from app.services.trademark_service import (
+    add_project_note,
+    add_tm_custom_event,
+    close_tm_custom_event,
     create_tm_application,
     delete_tm_application,
+    delete_tm_custom_event,
     get_tm_application_by_id,
     get_tm_application_timeline,
     get_tm_applications,
     get_tm_project_detail,
+    update_project_note,
     update_tm_application,
     update_tm_application_status,
     update_tm_project_detail,
@@ -119,6 +129,74 @@ def update_tm_application_status_endpoint(
         return application
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{application_id}/notes", response_model=List[TmProjectNoteRead])
+def add_project_note_endpoint(
+    application_id: int, payload: TmProjectNoteInput, session: Session = Depends(get_session)
+):
+    try:
+        notes = add_project_note(session, application_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if notes is None:
+        raise HTTPException(status_code=404, detail="Trademark application not found")
+    return notes
+
+
+@router.put("/{application_id}/notes/{note_id}", response_model=List[TmProjectNoteRead])
+def update_project_note_endpoint(
+    application_id: int,
+    note_id: int,
+    payload: TmProjectNoteInput,
+    session: Session = Depends(get_session),
+):
+    try:
+        notes = update_project_note(session, application_id, note_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if notes is None:
+        raise HTTPException(status_code=404, detail="Trademark project note not found")
+    return notes
+
+
+@router.post("/{application_id}/custom-events", response_model=List[TmCustomEventRead])
+def add_tm_custom_event_endpoint(
+    application_id: int, payload: TmCustomEventCreate, session: Session = Depends(get_session)
+):
+    events = add_tm_custom_event(session, application_id, payload)
+    if events is None:
+        raise HTTPException(status_code=404, detail="Trademark application not found")
+    return events
+
+
+@router.put("/{application_id}/custom-events/{event_id}/close", response_model=List[TmCustomEventRead])
+def close_tm_custom_event_endpoint(
+    application_id: int,
+    event_id: int,
+    payload: TmCustomEventClose,
+    session: Session = Depends(get_session),
+):
+    try:
+        events = close_tm_custom_event(session, application_id, event_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if events is None:
+        raise HTTPException(status_code=404, detail="Trademark custom event not found")
+    return events
+
+
+@router.delete("/{application_id}/custom-events/{event_id}", response_model=List[TmCustomEventRead])
+def delete_tm_custom_event_endpoint(
+    application_id: int, event_id: int, session: Session = Depends(get_session)
+):
+    try:
+        events = delete_tm_custom_event(session, application_id, event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if events is None:
+        raise HTTPException(status_code=404, detail="Trademark custom event not found")
+    return events
 
 
 @router.delete("/{application_id}")

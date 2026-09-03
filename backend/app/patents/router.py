@@ -15,6 +15,9 @@ from .schemas import (
     PatentClientInput,
     PatentClientRead,
     PatentClientUpdate,
+    PatentCustomEventClose,
+    PatentCustomEventCreate,
+    PatentCustomEventRead,
     PatentDraftFinalizeRequest,
     PatentProjectCreate,
     PatentProjectDetailUpdate,
@@ -25,7 +28,10 @@ from .schemas import (
     PatentStatusUpdate,
 )
 from .service import (
+    add_patent_custom_event,
     add_project_note,
+    close_patent_custom_event,
+    delete_patent_custom_event,
     update_project_note,
     archive_project,
     convert_draft_to_final,
@@ -210,6 +216,53 @@ def update_project_note_endpoint(
     if notes is None:
         raise HTTPException(status_code=404, detail="Patent project note not found")
     return notes
+
+
+@router.post("/projects/{project_id}/custom-events", response_model=list[PatentCustomEventRead])
+def add_patent_custom_event_endpoint(
+    project_id: int,
+    payload: PatentCustomEventCreate,
+    session: Session = Depends(get_session),
+):
+    events = add_patent_custom_event(session, project_id, payload)
+    if events is None:
+        raise HTTPException(status_code=404, detail="Patent project not found")
+    return events
+
+
+@router.put(
+    "/projects/{project_id}/custom-events/{event_id}/close",
+    response_model=list[PatentCustomEventRead],
+)
+def close_patent_custom_event_endpoint(
+    project_id: int,
+    event_id: int,
+    payload: PatentCustomEventClose,
+    session: Session = Depends(get_session),
+):
+    try:
+        events = close_patent_custom_event(session, project_id, event_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if events is None:
+        raise HTTPException(status_code=404, detail="Patent custom event not found")
+    return events
+
+
+@router.delete(
+    "/projects/{project_id}/custom-events/{event_id}",
+    response_model=list[PatentCustomEventRead],
+)
+def delete_patent_custom_event_endpoint(
+    project_id: int, event_id: int, session: Session = Depends(get_session)
+):
+    try:
+        events = delete_patent_custom_event(session, project_id, event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if events is None:
+        raise HTTPException(status_code=404, detail="Patent custom event not found")
+    return events
 
 
 @router.get("/clients", response_model=list[PatentClientRead])

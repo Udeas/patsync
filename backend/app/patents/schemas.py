@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from pydantic import field_validator
 from sqlmodel import Field, SQLModel
 
+from app.domain.custom_events import validate_reminder_option
 from .validators import parse_in_application_number, validate_pct_international_number
 
 
@@ -71,6 +72,37 @@ class PatentProjectNoteRead(SQLModel):
     id: int
     note_text: str
     created_date: datetime
+
+
+class PatentCustomEventReminderRead(SQLModel):
+    kind: str
+    fire_on: date
+    label: str
+
+
+class PatentCustomEventRead(SQLModel):
+    id: int
+    event_type: str
+    event_date: date
+    reminder_option: str
+    reminder_date: Optional[date] = None
+    closure_date: Optional[date] = None
+    created_date: datetime
+
+
+class PatentCustomEventCreate(SQLModel):
+    event_type: str = Field(min_length=1)
+    event_date: date
+    reminder_option: str = "none"
+
+    @field_validator("reminder_option")
+    @classmethod
+    def validate_reminder(cls, value: str) -> str:
+        return validate_reminder_option(value)
+
+
+class PatentCustomEventClose(SQLModel):
+    closure_date: date
 
 
 class PatentAgentSummary(SQLModel):
@@ -173,6 +205,8 @@ class PatentProjectRead(SQLModel):
     abandon_reason: Optional[str] = None
     is_archived: bool = False
     notes: list[PatentProjectNoteRead] = Field(default_factory=list)
+    custom_events: list[PatentCustomEventRead] = Field(default_factory=list)
+    custom_event_reminders: list[PatentCustomEventReminderRead] = Field(default_factory=list)
 
 
 class PatentDraftFinalizeRequest(SQLModel):

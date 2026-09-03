@@ -13,6 +13,7 @@ from .models import (
     PatentApplicant,
     PatentAgent,
     PatentClient,
+    PatentCustomEvent,
     PatentInternationalApplication,
     PatentInventor,
     PatentPriority,
@@ -25,6 +26,7 @@ from .reminders import compute_next_patent_action
 from .patent_status_catalog import ALL_STATUS_IDS
 from app.audit.service import record_status_change
 from app.audit.context import mark_explicit
+from app.domain.custom_events import REMINDER_OPTION_NONE, compute_reminder_date, format_short_date
 from . import annuity
 from .schemas import (
     PatentAgentInput,
@@ -36,6 +38,9 @@ from .schemas import (
     PatentAnnuityTransferInput,
     PatentClientInput,
     PatentClientUpdate,
+    PatentCustomEventClose,
+    PatentCustomEventCreate,
+    PatentCustomEventRead,
     PatentDraftFinalizeRequest,
     PatentInternationalInput,
     PatentPriorityInput,
@@ -192,11 +197,33 @@ def _build_relations_dict(
     parent_priority_dates=(),
     annuity_paid_years=(),
     notes=(),
+    custom_events=(),
 ) -> dict:
     return {
         "notes": [
             {"id": n.id, "note_text": n.note_text, "created_date": n.created_date}
             for n in notes
+        ],
+        "custom_events": [
+            {
+                "id": e.id,
+                "event_type": e.event_type,
+                "event_date": e.event_date,
+                "reminder_option": e.reminder_option,
+                "reminder_date": e.reminder_date,
+                "closure_date": e.closure_date,
+                "created_date": e.created_date,
+            }
+            for e in custom_events
+        ],
+        "custom_event_reminders": [
+            {
+                "kind": "custom_event",
+                "fire_on": e.reminder_date,
+                "label": f"{e.event_type} issued on {format_short_date(e.event_date)}",
+            }
+            for e in custom_events
+            if e.closure_date is None and e.reminder_date is not None
         ],
         "applicants": [
             {"name": applicant.name, "country": applicant.country, "address": applicant.address}
@@ -266,6 +293,7 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         .order_by(PatentStatusEvent.status_date.asc(), PatentStatusEvent.status_id.asc())
     ).all()
     notes = _project_notes(session, project.id)
+    custom_events = _patent_custom_events(session, project.id)
 
     attorney = (
         _agent_to_dict(session.get(PatentAgent, project.attorney_id))
@@ -301,6 +329,7 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         parent_priority_dates=parent_priority_dates,
         annuity_paid_years=_annuity_paid_years(session, project.id),
         notes=notes,
+        custom_events=custom_events,
     )
 
 
@@ -348,6 +377,82 @@ def update_project_note(
         PatentProjectNoteRead(id=n.id, note_text=n.note_text, created_date=n.created_date)
         for n in _project_notes(session, project_id)
     ]
+
+
+def _patent_custom_events(session: Session, project_id: int) -> list[PatentCustomEvent]:
+    return session.exec(
+        select(PatentCustomEvent)
+        .where(PatentCustomEvent.project_id == project_id)
+        .order_by(PatentCustomEvent.event_date.desc(), PatentCustomEvent.id.desc())
+    ).all()
+
+
+def _patent_custom_events_read(session: Session, project_id: int) -> list[PatentCustomEventRead]:
+    return [
+        PatentCustomEventRead(
+            id=e.id,
+            event_type=e.event_type,
+            event_date=e.event_date,
+            reminder_option=e.reminder_option,
+            reminder_date=e.reminder_date,
+            closure_date=e.closure_date,
+            created_date=e.created_date,
+        )
+        for e in _patent_custom_events(session, project_id)
+    ]
+
+
+def add_patent_custom_event(
+    session: Session, project_id: int, payload: PatentCustomEventCreate
+) -> list[PatentCustomEventRead] | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    reminder_date = compute_reminder_date(payload.event_date, payload.reminder_option)
+    session.add(
+        PatentCustomEvent(
+            project_id=project_id,
+            event_type=payload.event_type.strip(),
+            event_date=payload.event_date,
+            reminder_option=payload.reminder_option,
+            reminder_date=reminder_date,
+        )
+    )
+    session.commit()
+    return _patent_custom_events_read(session, project_id)
+
+
+def close_patent_custom_event(
+    session: Session, project_id: int, event_id: int, payload: PatentCustomEventClose
+) -> list[PatentCustomEventRead] | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    event = session.get(PatentCustomEvent, event_id)
+    if not event or event.project_id != project_id:
+        return None
+    if event.closure_date is not None:
+        raise ValueError("Event is already closed")
+    event.closure_date = payload.closure_date
+    session.add(event)
+    session.commit()
+    return _patent_custom_events_read(session, project_id)
+
+
+def delete_patent_custom_event(
+    session: Session, project_id: int, event_id: int
+) -> list[PatentCustomEventRead] | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    event = session.get(PatentCustomEvent, event_id)
+    if not event or event.project_id != project_id:
+        return None
+    if event.reminder_option != REMINDER_OPTION_NONE or event.closure_date is not None:
+        raise ValueError("Only open, no-reminder events can be deleted")
+    session.delete(event)
+    session.commit()
+    return _patent_custom_events_read(session, project_id)
 
 
 def _annuity_paid_years(session: Session, project_id: int) -> list[int]:
@@ -665,6 +770,13 @@ def _load_relations_bulk(
             )
         ).all()
     )
+    custom_events_by = _grouped(
+        session.exec(
+            select(PatentCustomEvent)
+            .where(PatentCustomEvent.project_id.in_(project_ids))
+            .order_by(PatentCustomEvent.project_id.asc(), PatentCustomEvent.event_date.desc())
+        ).all()
+    )
 
     parent_ids = {project.parent_project_id for project in projects if project.parent_project_id}
     parents_by_id: dict[int, PatentProject] = {}
@@ -736,6 +848,7 @@ def _load_relations_bulk(
                 if parent
                 else []
             ),
+            custom_events=custom_events_by.get(project.id, []),
         )
     return relations_by_project
 

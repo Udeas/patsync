@@ -130,6 +130,22 @@ class PatentProjectNote(SQLModel, table=True):
     )
 
 
+class PatentCustomEvent(SQLModel, table=True):
+    __tablename__ = "patent_custom_event"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    event_type: str = Field(nullable=False)
+    event_date: date = Field(nullable=False)
+    reminder_option: str = Field(nullable=False)
+    reminder_date: Optional[date] = Field(default=None)
+    closure_date: Optional[date] = Field(default=None)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
 class PatentClient(SQLModel, table=True):
     __tablename__ = "patent_client"
 
