@@ -594,6 +594,68 @@ def upsert_form3_updated_entry(session: Session, project_id: int, fer_date) -> N
         )
 
 
+def upsert_form27_entry(session: Session, project_id: int, grant_date, grant_number: str | None) -> None:
+    """Triggered whenever the grant date is entered or corrected. Each Form
+    27 cycle is its own row (item_type keyed by the reporting block's start
+    FY), so "correcting the grant date" means finding whichever cycle is
+    currently open (unclosed) for this project and either updating it in
+    place (grant date correction lands in the same block) or replacing it
+    (correction shifts to a different block) - never leaving a stale
+    duplicate and never touching already-closed historical cycles."""
+    if not grant_date or not (grant_number or "").strip():
+        return
+    plan = docket_rules.plan_form27_first_entry(grant_date=grant_date, grant_number=grant_number.strip())
+
+    open_entries = session.exec(
+        select(PatentDocketEntry).where(
+            PatentDocketEntry.project_id == project_id,
+            PatentDocketEntry.item_type.like(f"{docket_rules.ITEM_FORM27_PREFIX}%"),
+            PatentDocketEntry.closure_date.is_(None),
+        )
+    ).all()
+
+    existing = next((e for e in open_entries if e.item_type == plan.item_type), None)
+    if existing:
+        if existing.due_date != plan.due_date or existing.title != plan.title:
+            existing.due_date = plan.due_date
+            existing.title = plan.title
+            session.add(existing)
+            write_audit(
+                session,
+                action="docket_entry_updated",
+                entity_type="patent",
+                entity_id=project_id,
+                entity_label=plan.title,
+                changes=[{"field": "due_date", "old": None, "new": plan.due_date.isoformat()}],
+            )
+        return
+
+    # No open cycle matches the newly computed block - the grant date
+    # correction moved to a different FY block. Replace any other open
+    # Form 27 cycle (there should be at most one) rather than stacking up.
+    for stale in open_entries:
+        session.delete(stale)
+
+    session.add(
+        PatentDocketEntry(
+            project_id=project_id,
+            item_type=plan.item_type,
+            title=plan.title,
+            rule_reference=plan.rule_reference,
+            due_date=plan.due_date,
+            is_system_generated=True,
+        )
+    )
+    write_audit(
+        session,
+        action="docket_entry_generated",
+        entity_type="patent",
+        entity_id=project_id,
+        entity_label=plan.title,
+        changes=[{"field": "due_date", "old": None, "new": plan.due_date.isoformat()}],
+    )
+
+
 def close_patent_docket_entry(
     session: Session, project_id: int, entry_id: int, payload: PatentDocketEntryClose
 ) -> list[PatentDocketEntryRead] | None:
@@ -607,6 +669,38 @@ def close_patent_docket_entry(
         raise ValueError("Docket entry is already closed")
     entry.closure_date = payload.closure_date
     session.add(entry)
+
+    # Form 27 roll-forward: closing one cycle generates the next one, as
+    # long as the patent is still tracked as in force. There is no
+    # dedicated in-force/lapsed/revoked status in this codebase - is_archived
+    # is the closest existing proxy for "stop tracking this patent" and is
+    # used here as a practical gate, not a legal lapse determination.
+    block_start = docket_rules.parse_form27_block_start(entry.item_type)
+    if block_start is not None and not project.is_archived:
+        next_plan = docket_rules.plan_form27_next_entry(
+            grant_number=project.grant_number or "",
+            prior_block_start_year=block_start,
+            prior_due_date=entry.due_date,
+        )
+        session.add(
+            PatentDocketEntry(
+                project_id=project_id,
+                item_type=next_plan.item_type,
+                title=next_plan.title,
+                rule_reference=next_plan.rule_reference,
+                due_date=next_plan.due_date,
+                is_system_generated=True,
+            )
+        )
+        write_audit(
+            session,
+            action="docket_entry_generated",
+            entity_type="patent",
+            entity_id=project_id,
+            entity_label=next_plan.title,
+            changes=[{"field": "due_date", "old": None, "new": next_plan.due_date.isoformat()}],
+        )
+
     session.commit()
     return _patent_docket_entries_read(session, project_id)
 
@@ -1390,6 +1484,9 @@ def update_project_detail(
     if fer_item and fer_item.status_date:
         upsert_form3_updated_entry(session, project_id, fer_item.status_date)
 
+    if granted_item and granted_item.status_date:
+        upsert_form27_entry(session, project_id, granted_item.status_date, project.grant_number)
+
     project.modified_date = datetime.utcnow()
     session.add(project)
     session.commit()
@@ -1459,6 +1556,8 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
     )
     if status_id == STATUS_ID_FER_ISSUED and status_date:
         upsert_form3_updated_entry(session, project_id, status_date)
+    if status_id == STATUS_ID_GRANTED and status_date:
+        upsert_form27_entry(session, project_id, status_date, project.grant_number)
     session.commit()
     return _project_to_response(session, project)
 
