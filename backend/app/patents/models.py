@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import Column, DateTime, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -37,6 +37,7 @@ class PatentProject(SQLModel, table=True):
     )
     annuity_transferred_comment: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     pct_wipo_filed_only: bool = Field(default=False)
+    proof_of_right_furnished: bool = Field(default=False)
     is_archived: bool = Field(default=False, nullable=False, index=True)
     created_date: datetime = Field(
         default_factory=datetime.utcnow,
@@ -139,6 +140,33 @@ class PatentCustomEvent(SQLModel, table=True):
     event_date: date = Field(nullable=False)
     reminder_option: str = Field(nullable=False)
     reminder_date: Optional[date] = Field(default=None)
+    closure_date: Optional[date] = Field(default=None)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PatentDocketEntry(SQLModel, table=True):
+    """Auto-docketed Indian filing-formality deadlines (Rule 10 assignment,
+    Rule 135(1) POA, Rule 12(1A)/12(2) Form 3, and the internal priority-
+    document target). See app/patents/docket.py for the generation rules.
+    Unique on (project_id, item_type) so re-running generation is a no-op."""
+
+    __tablename__ = "patent_docket_entry"
+    __table_args__ = (
+        UniqueConstraint("project_id", "item_type", name="uq_patent_docket_entry_project_item"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    item_type: str = Field(nullable=False)
+    title: str = Field(nullable=False)
+    rule_reference: str = Field(nullable=False)
+    due_date: date = Field(nullable=False)
+    is_internal_target: bool = Field(default=False)
+    is_system_generated: bool = Field(default=True)
+    auto_satisfied: bool = Field(default=False)
     closure_date: Optional[date] = Field(default=None)
     created_date: datetime = Field(
         default_factory=datetime.utcnow,

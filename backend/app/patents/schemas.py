@@ -105,6 +105,29 @@ class PatentCustomEventClose(SQLModel):
     closure_date: date
 
 
+class PatentDocketReminderRead(SQLModel):
+    kind: str
+    fire_on: date
+    label: str
+
+
+class PatentDocketEntryRead(SQLModel):
+    id: int
+    item_type: str
+    title: str
+    rule_reference: str
+    due_date: date
+    is_internal_target: bool = False
+    is_system_generated: bool = True
+    auto_satisfied: bool = False
+    closure_date: Optional[date] = None
+    created_date: datetime
+
+
+class PatentDocketEntryClose(SQLModel):
+    closure_date: date
+
+
 class PatentAgentSummary(SQLModel):
     id: int
     name: str
@@ -138,6 +161,7 @@ class PatentProjectCreate(SQLModel):
     client_docket_no: Optional[str] = None
     provisional_kind: Optional[Literal["OP", "ONP"]] = None
     pct_wipo_filed_only: bool = False
+    proof_of_right_furnished: bool = False
     international_application_no: Optional[str] = None
     international_application_date: Optional[date] = None
     parent_project_id: Optional[int] = None
@@ -191,6 +215,7 @@ class PatentProjectRead(SQLModel):
     annuity_paid_upto: Optional[date] = None
     next_annuity_due: Optional[date] = None
     is_annuity_transferred: bool = False
+    proof_of_right_furnished: bool = False
     current_status_id: Optional[int] = None
     current_status_date: Optional[date] = None
     due_action: Optional[str] = None
@@ -207,6 +232,8 @@ class PatentProjectRead(SQLModel):
     notes: list[PatentProjectNoteRead] = Field(default_factory=list)
     custom_events: list[PatentCustomEventRead] = Field(default_factory=list)
     custom_event_reminders: list[PatentCustomEventReminderRead] = Field(default_factory=list)
+    docket_entries: list[PatentDocketEntryRead] = Field(default_factory=list)
+    docket_entry_reminders: list[PatentDocketReminderRead] = Field(default_factory=list)
 
 
 class PatentDraftFinalizeRequest(SQLModel):

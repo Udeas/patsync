@@ -14,6 +14,7 @@ from .models import (
     PatentAgent,
     PatentClient,
     PatentCustomEvent,
+    PatentDocketEntry,
     PatentInternationalApplication,
     PatentInventor,
     PatentPriority,
@@ -21,10 +22,11 @@ from .models import (
     PatentProjectNote,
     PatentStatusEvent,
 )
-from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, STATUS_ID_GRANTED, status_label
+from .patent_status_catalog import STATUS_ID_APPLICATION_FILED, STATUS_ID_ABANDONED, STATUS_ID_FER_ISSUED, STATUS_ID_GRANTED, status_label
+from . import docket as docket_rules
 from .reminders import compute_next_patent_action
 from .patent_status_catalog import ALL_STATUS_IDS
-from app.audit.service import record_status_change
+from app.audit.service import record_status_change, write_audit
 from app.audit.context import mark_explicit
 from app.domain.custom_events import REMINDER_OPTION_NONE, compute_reminder_date, format_short_date
 from . import annuity
@@ -41,6 +43,8 @@ from .schemas import (
     PatentCustomEventClose,
     PatentCustomEventCreate,
     PatentCustomEventRead,
+    PatentDocketEntryClose,
+    PatentDocketEntryRead,
     PatentDraftFinalizeRequest,
     PatentInternationalInput,
     PatentPriorityInput,
@@ -198,6 +202,7 @@ def _build_relations_dict(
     annuity_paid_years=(),
     notes=(),
     custom_events=(),
+    docket_entries=(),
 ) -> dict:
     return {
         "notes": [
@@ -224,6 +229,24 @@ def _build_relations_dict(
             }
             for e in custom_events
             if e.closure_date is None and e.reminder_date is not None
+        ],
+        "docket_entries": [
+            {
+                "id": e.id,
+                "item_type": e.item_type,
+                "title": e.title,
+                "rule_reference": e.rule_reference,
+                "due_date": e.due_date,
+                "is_internal_target": e.is_internal_target,
+                "is_system_generated": e.is_system_generated,
+                "auto_satisfied": e.auto_satisfied,
+                "closure_date": e.closure_date,
+                "created_date": e.created_date,
+            }
+            for e in docket_entries
+        ],
+        "docket_entry_reminders": [
+            _docket_entry_reminder_row(e) for e in docket_entries if e.closure_date is None
         ],
         "applicants": [
             {"name": applicant.name, "country": applicant.country, "address": applicant.address}
@@ -294,6 +317,7 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
     ).all()
     notes = _project_notes(session, project.id)
     custom_events = _patent_custom_events(session, project.id)
+    docket_entries = _patent_docket_entries(session, project.id)
 
     attorney = (
         _agent_to_dict(session.get(PatentAgent, project.attorney_id))
@@ -330,6 +354,7 @@ def _load_project_relations(session: Session, project: PatentProject) -> dict:
         annuity_paid_years=_annuity_paid_years(session, project.id),
         notes=notes,
         custom_events=custom_events,
+        docket_entries=docket_entries,
     )
 
 
@@ -453,6 +478,145 @@ def delete_patent_custom_event(
     session.delete(event)
     session.commit()
     return _patent_custom_events_read(session, project_id)
+
+
+def _patent_docket_entries(session: Session, project_id: int) -> list[PatentDocketEntry]:
+    return session.exec(
+        select(PatentDocketEntry)
+        .where(PatentDocketEntry.project_id == project_id)
+        .order_by(PatentDocketEntry.due_date.asc(), PatentDocketEntry.id.asc())
+    ).all()
+
+
+def _patent_docket_entry_read(e: PatentDocketEntry) -> PatentDocketEntryRead:
+    return PatentDocketEntryRead(
+        id=e.id,
+        item_type=e.item_type,
+        title=e.title,
+        rule_reference=e.rule_reference,
+        due_date=e.due_date,
+        is_internal_target=e.is_internal_target,
+        is_system_generated=e.is_system_generated,
+        auto_satisfied=e.auto_satisfied,
+        closure_date=e.closure_date,
+        created_date=e.created_date,
+    )
+
+
+def _patent_docket_entries_read(session: Session, project_id: int) -> list[PatentDocketEntryRead]:
+    return [_patent_docket_entry_read(e) for e in _patent_docket_entries(session, project_id)]
+
+
+def _generate_default_docket_entries(
+    session: Session, project: PatentProject, *, has_priority_claim: bool
+) -> None:
+    """Requirement 1 of the auto-docket feature: create the default Indian
+    filing-formality items once, at project creation. Idempotent by design
+    (only ever called once, on a freshly-flushed project with no existing
+    docket entries) and additionally protected by the DB unique constraint
+    on (project_id, item_type)."""
+    plans = docket_rules.plan_default_docket_entries(
+        application_type=project.application_type,
+        filing_date=project.in_application_date,
+        has_priority_claim=has_priority_claim,
+        proof_of_right_furnished=project.proof_of_right_furnished,
+    )
+    now = datetime.utcnow()
+    for plan in plans:
+        session.add(
+            PatentDocketEntry(
+                project_id=project.id,
+                item_type=plan.item_type,
+                title=plan.title,
+                rule_reference=plan.rule_reference,
+                due_date=plan.due_date,
+                is_internal_target=plan.is_internal_target,
+                is_system_generated=True,
+                auto_satisfied=plan.auto_satisfied,
+                closure_date=now.date() if plan.auto_satisfied else None,
+            )
+        )
+    if plans:
+        write_audit(
+            session,
+            action="docket_entries_generated",
+            entity_type="patent",
+            entity_id=project.id,
+            entity_label=project.docket_no,
+            changes=[{"field": "docket_entries", "old": None, "new": [p.item_type for p in plans]}],
+        )
+
+
+def upsert_form3_updated_entry(session: Session, project_id: int, fer_date) -> None:
+    """Requirement 2: whenever the FER date is entered or updated, create
+    (or update in place - never duplicate) the Rule 12(2) updated-Form-3
+    item due 3 months after that date."""
+    if not fer_date:
+        return
+    plan = docket_rules.plan_form3_updated_entry(fer_date)
+    existing = session.exec(
+        select(PatentDocketEntry).where(
+            PatentDocketEntry.project_id == project_id,
+            PatentDocketEntry.item_type == plan.item_type,
+        )
+    ).first()
+    if existing:
+        if existing.due_date == plan.due_date:
+            return
+        existing.due_date = plan.due_date
+        session.add(existing)
+        write_audit(
+            session,
+            action="docket_entry_updated",
+            entity_type="patent",
+            entity_id=project_id,
+            entity_label=plan.title,
+            changes=[{"field": "due_date", "old": None, "new": plan.due_date.isoformat()}],
+        )
+    else:
+        session.add(
+            PatentDocketEntry(
+                project_id=project_id,
+                item_type=plan.item_type,
+                title=plan.title,
+                rule_reference=plan.rule_reference,
+                due_date=plan.due_date,
+                is_system_generated=True,
+            )
+        )
+        write_audit(
+            session,
+            action="docket_entry_generated",
+            entity_type="patent",
+            entity_id=project_id,
+            entity_label=plan.title,
+            changes=[{"field": "due_date", "old": None, "new": plan.due_date.isoformat()}],
+        )
+
+
+def close_patent_docket_entry(
+    session: Session, project_id: int, entry_id: int, payload: PatentDocketEntryClose
+) -> list[PatentDocketEntryRead] | None:
+    project = session.get(PatentProject, project_id)
+    if not project:
+        return None
+    entry = session.get(PatentDocketEntry, entry_id)
+    if not entry or entry.project_id != project_id:
+        return None
+    if entry.closure_date is not None:
+        raise ValueError("Docket entry is already closed")
+    entry.closure_date = payload.closure_date
+    session.add(entry)
+    session.commit()
+    return _patent_docket_entries_read(session, project_id)
+
+
+def _docket_entry_reminder_row(e: PatentDocketEntry) -> dict:
+    return {
+        "kind": "docket_entry",
+        "fire_on": e.due_date,
+        "label": f"{e.title} ({e.rule_reference})",
+    }
 
 
 def _annuity_paid_years(session: Session, project_id: int) -> list[int]:
@@ -665,6 +829,7 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
         application_type=payload.application_type,
         provisional_kind=payload.provisional_kind,
         pct_wipo_filed_only=payload.pct_wipo_filed_only,
+        proof_of_right_furnished=payload.proof_of_right_furnished,
         attorney_id=payload.attorney_id,
         client_id=payload.client_id,
         client_docket_no=payload.client_docket_no,
@@ -705,6 +870,9 @@ def create_project(session: Session, payload: PatentProjectCreate) -> dict:
 
     _persist_priorities_and_international(session, project.id, payload)
     _seed_application_filed_if_final(session, project)
+    _generate_default_docket_entries(
+        session, project, has_priority_claim=len(payload.priorities) > 0
+    )
 
     session.commit()
     session.refresh(project)
@@ -775,6 +943,13 @@ def _load_relations_bulk(
             select(PatentCustomEvent)
             .where(PatentCustomEvent.project_id.in_(project_ids))
             .order_by(PatentCustomEvent.project_id.asc(), PatentCustomEvent.event_date.desc())
+        ).all()
+    )
+    docket_entries_by = _grouped(
+        session.exec(
+            select(PatentDocketEntry)
+            .where(PatentDocketEntry.project_id.in_(project_ids))
+            .order_by(PatentDocketEntry.project_id.asc(), PatentDocketEntry.due_date.asc())
         ).all()
     )
 
@@ -849,6 +1024,7 @@ def _load_relations_bulk(
                 else []
             ),
             custom_events=custom_events_by.get(project.id, []),
+            docket_entries=docket_entries_by.get(project.id, []),
         )
     return relations_by_project
 
@@ -1207,6 +1383,13 @@ def update_project_detail(
                 )
             )
 
+    fer_item = next(
+        (item for item in detail_update.timeline_updates if item.status_id == STATUS_ID_FER_ISSUED),
+        None,
+    )
+    if fer_item and fer_item.status_date:
+        upsert_form3_updated_entry(session, project_id, fer_item.status_date)
+
     project.modified_date = datetime.utcnow()
     session.add(project)
     session.commit()
@@ -1274,6 +1457,8 @@ def update_status_event(session: Session, project_id: int, status_id: int, statu
         new_status=status_label(status_id),
         extra_changes=extra,
     )
+    if status_id == STATUS_ID_FER_ISSUED and status_date:
+        upsert_form3_updated_entry(session, project_id, status_date)
     session.commit()
     return _project_to_response(session, project)
 

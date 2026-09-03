@@ -778,6 +778,12 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                     "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT FALSE"
                 )
             )
+        if not _postgres_column_exists(conn, "patent_project", "proof_of_right_furnished"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN proof_of_right_furnished BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
         if not _postgres_column_exists(conn, "patent_project", "is_archived"):
             conn.execute(
                 text(
@@ -906,6 +912,26 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_docket_entry (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    item_type VARCHAR NOT NULL,
+                    title VARCHAR NOT NULL,
+                    rule_reference VARCHAR NOT NULL,
+                    due_date DATE NOT NULL,
+                    is_internal_target BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_system_generated BOOLEAN NOT NULL DEFAULT TRUE,
+                    auto_satisfied BOOLEAN NOT NULL DEFAULT FALSE,
+                    closure_date DATE,
+                    created_date TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT uq_patent_docket_entry_project_item UNIQUE (project_id, item_type)
+                );
+                """
+            )
+        )
         return
 
     if _sqlite_column_exists(conn, "patent_project", "id"):
@@ -917,6 +943,12 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             conn.execute(
                 text(
                     "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+        if not _sqlite_column_exists(conn, "patent_project", "proof_of_right_furnished"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN proof_of_right_furnished BOOLEAN NOT NULL DEFAULT 0"
                 )
             )
         if not _sqlite_column_exists(conn, "patent_project", "is_archived"):
@@ -1023,6 +1055,26 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 reminder_date DATE,
                 closure_date DATE,
                 created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_docket_entry (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                item_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                rule_reference TEXT NOT NULL,
+                due_date DATE NOT NULL,
+                is_internal_target BOOLEAN NOT NULL DEFAULT 0,
+                is_system_generated BOOLEAN NOT NULL DEFAULT 1,
+                auto_satisfied BOOLEAN NOT NULL DEFAULT 0,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (project_id, item_type)
             );
             """
         )

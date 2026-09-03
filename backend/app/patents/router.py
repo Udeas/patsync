@@ -18,6 +18,8 @@ from .schemas import (
     PatentCustomEventClose,
     PatentCustomEventCreate,
     PatentCustomEventRead,
+    PatentDocketEntryClose,
+    PatentDocketEntryRead,
     PatentDraftFinalizeRequest,
     PatentProjectCreate,
     PatentProjectDetailUpdate,
@@ -31,6 +33,7 @@ from .service import (
     add_patent_custom_event,
     add_project_note,
     close_patent_custom_event,
+    close_patent_docket_entry,
     delete_patent_custom_event,
     update_project_note,
     archive_project,
@@ -263,6 +266,25 @@ def delete_patent_custom_event_endpoint(
     if events is None:
         raise HTTPException(status_code=404, detail="Patent custom event not found")
     return events
+
+
+@router.put(
+    "/projects/{project_id}/docket-entries/{entry_id}/close",
+    response_model=list[PatentDocketEntryRead],
+)
+def close_patent_docket_entry_endpoint(
+    project_id: int,
+    entry_id: int,
+    payload: PatentDocketEntryClose,
+    session: Session = Depends(get_session),
+):
+    try:
+        entries = close_patent_docket_entry(session, project_id, entry_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if entries is None:
+        raise HTTPException(status_code=404, detail="Patent docket entry not found")
+    return entries
 
 
 @router.get("/clients", response_model=list[PatentClientRead])
