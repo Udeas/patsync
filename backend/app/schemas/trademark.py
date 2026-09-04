@@ -229,6 +229,7 @@ class TmApplicationRead(SQLModel):
     filing_date: Optional[date] = None
     fer_followup_due: Optional[date] = None
     hearing_due: Optional[date] = None
+    renewal_due: Optional[date] = None
     upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
     last_status_updated_at: Optional[datetime] = None
 
@@ -244,6 +245,7 @@ class TmApplicationTimelineRead(SQLModel):
     filing_date: Optional[date]
     fer_followup_due: Optional[date]
     hearing_due: Optional[date]
+    renewal_due: Optional[date] = None
     upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
     events: List[TmApplicationTimelineEventRead] = Field(default_factory=list)
 
@@ -382,6 +384,7 @@ class TmProjectDetailRead(SQLModel):
     filing_date: Optional[date] = None
     fer_followup_due: Optional[date] = None
     hearing_due: Optional[date] = None
+    renewal_due: Optional[date] = None
     upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
     notes: List[TmProjectNoteRead] = Field(default_factory=list)
     custom_events: List[TmCustomEventRead] = Field(default_factory=list)

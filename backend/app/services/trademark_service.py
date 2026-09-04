@@ -298,6 +298,7 @@ def _read_model_with_timeline(
         filing_date=tl.filing_date,
         fer_followup_due=tl.fer_followup_due,
         hearing_due=tl.hearing_due,
+        renewal_due=tl.renewal_due,
         upcoming_reminders=reminders,
         last_status_updated_at=data.last_status_updated_at,
     )
@@ -496,6 +497,7 @@ def get_tm_application_timeline(session: Session, application_id: int) -> Option
         filing_date=tl.filing_date,
         fer_followup_due=tl.fer_followup_due,
         hearing_due=tl.hearing_due,
+        renewal_due=tl.renewal_due,
         upcoming_reminders=reminders,
         events=events,
     )
@@ -892,6 +894,7 @@ def get_tm_project_detail(session: Session, application_id: int) -> Optional[TmP
         filing_date=app_read.filing_date,
         fer_followup_due=app_read.fer_followup_due,
         hearing_due=app_read.hearing_due,
+        renewal_due=app_read.renewal_due,
         upcoming_reminders=app_read.upcoming_reminders,
         notes=_project_notes_read(session, application_id),
         custom_events=_tm_custom_events_read(session, application_id),
