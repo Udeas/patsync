@@ -13,6 +13,7 @@ APPLICATION_NUMBER_PATTERN = r"^\d{7}$"
 PROJECT_CODE_PATTERN = r"^[A-Za-z0-9]+$"
 APPLICANT_TYPE_VALUES = {"MSME", "Individual", "Company"}
 TM_TYPE_VALUES = {"Device/Logo", "Wordmark"}
+TM_USAGE_STATUS_VALUES = {"Proposed to be used", "Used since"}
 
 
 class TmReminderRead(SQLModel):
@@ -79,6 +80,12 @@ def _validate_tm_type(value: str) -> str:
     return value
 
 
+def _validate_tm_usage_status(value: str) -> str:
+    if value not in TM_USAGE_STATUS_VALUES:
+        raise ValueError("tm_usage_status must be one of 'Proposed to be used', 'Used since'")
+    return value
+
+
 def _validate_selected_classes(values: Optional[List[str]]) -> List[str]:
     cleaned: List[str] = []
     for raw in values or []:
@@ -110,6 +117,8 @@ class TmApplicationCreate(SQLModel):
     tm_type: str
     tm_class: str = Field(min_length=1)
     is_multi_class: bool = False
+    tm_usage_status: str
+    tm_used_since_date: Optional[date] = None
     tm_selected_classes: List[str] = Field(default_factory=list)
     application_class_descriptions: List[TmClassDescriptionEntry] = Field(default_factory=list)
     client_id: Optional[int] = None
@@ -134,6 +143,11 @@ class TmApplicationCreate(SQLModel):
     @classmethod
     def validate_tm_type(cls, value: str) -> str:
         return _validate_tm_type(value)
+
+    @field_validator("tm_usage_status")
+    @classmethod
+    def validate_tm_usage_status(cls, value: str) -> str:
+        return _validate_tm_usage_status(value)
 
     @field_validator("tm_class")
     @classmethod
@@ -175,6 +189,17 @@ class TmApplicationCreate(SQLModel):
                 )
         return self
 
+    @model_validator(mode="after")
+    def validate_usage_details(self) -> "TmApplicationCreate":
+        if self.tm_usage_status == "Used since":
+            if not self.tm_used_since_date:
+                raise ValueError("tm_used_since_date is required when tm_usage_status is 'Used since'.")
+            if self.tm_used_since_date > date.today():
+                raise ValueError("tm_used_since_date cannot be in the future.")
+        elif self.tm_used_since_date is not None:
+            raise ValueError("tm_used_since_date must be empty unless tm_usage_status is 'Used since'.")
+        return self
+
 
 class TmApplicationRead(SQLModel):
     id: int
@@ -189,6 +214,8 @@ class TmApplicationRead(SQLModel):
     tm_class: str
     tm_class_description: Optional[str] = None
     is_multi_class: bool = False
+    tm_usage_status: Optional[str] = None
+    tm_used_since_date: Optional[date] = None
     tm_selected_classes: List[str] = Field(default_factory=list)
     application_class_descriptions: List[TmClassDescriptionEntry] = Field(default_factory=list)
     applicant_address: str
@@ -232,6 +259,8 @@ class TmApplicationUpdate(SQLModel):
     tm_type: Optional[str] = None
     tm_class: Optional[str] = None
     is_multi_class: Optional[bool] = None
+    tm_usage_status: Optional[str] = None
+    tm_used_since_date: Optional[date] = None
     tm_selected_classes: Optional[List[str]] = None
     application_class_descriptions: Optional[List[TmClassDescriptionEntry]] = None
     client_id: Optional[int] = None
@@ -263,6 +292,13 @@ class TmApplicationUpdate(SQLModel):
             return value
         return _validate_tm_type(value)
 
+    @field_validator("tm_usage_status")
+    @classmethod
+    def validate_optional_tm_usage_status(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        return _validate_tm_usage_status(value)
+
     @field_validator("tm_class")
     @classmethod
     def validate_optional_tm_class(cls, value: Optional[str]) -> Optional[str]:
@@ -285,6 +321,21 @@ class TmApplicationUpdate(SQLModel):
         if value is None:
             return value
         return _validate_class_description_entries(value)
+
+    @model_validator(mode="after")
+    def validate_usage_details(self) -> "TmApplicationUpdate":
+        # Only enforced when this update touches tm_usage_status - a patch
+        # that doesn't mention usage status at all shouldn't be blocked by it.
+        if self.tm_usage_status is None:
+            return self
+        if self.tm_usage_status == "Used since":
+            if not self.tm_used_since_date:
+                raise ValueError("tm_used_since_date is required when tm_usage_status is 'Used since'.")
+            if self.tm_used_since_date > date.today():
+                raise ValueError("tm_used_since_date cannot be in the future.")
+        elif self.tm_used_since_date is not None:
+            raise ValueError("tm_used_since_date must be empty unless tm_usage_status is 'Used since'.")
+        return self
 
 
 class TmApplicationStatusUpdate(SQLModel):
@@ -317,6 +368,8 @@ class TmProjectDetailRead(SQLModel):
     tm_class: str
     tm_class_description: Optional[str] = None
     is_multi_class: bool = False
+    tm_usage_status: Optional[str] = None
+    tm_used_since_date: Optional[date] = None
     tm_selected_classes: List[str] = Field(default_factory=list)
     application_class_descriptions: List[TmClassDescriptionEntry] = Field(default_factory=list)
     applicant_address: str

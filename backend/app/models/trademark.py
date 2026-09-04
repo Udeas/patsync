@@ -17,6 +17,8 @@ class TmApplicationData(SQLModel, table=True):
     tm_type: Optional[str] = Field(default=None)
     tm_class: str = Field(nullable=False)
     is_multi_class: bool = Field(default=False)
+    tm_usage_status: Optional[str] = Field(default=None)
+    tm_used_since_date: Optional[date] = Field(default=None)
     tm_selected_classes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     application_class_description: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)

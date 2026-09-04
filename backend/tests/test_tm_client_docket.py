@@ -33,6 +33,7 @@ def test_create_and_update_persists_tm_client_docket_no() -> None:
                 tm_name="AcmeMark",
                 tm_type="Wordmark",
                 tm_class="9",
+                tm_usage_status="Proposed to be used",
                 applicant_address="Somewhere",
                 client_docket_no="TM-DOCKET-1",
             ),

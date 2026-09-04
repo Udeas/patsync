@@ -283,6 +283,8 @@ def _read_model_with_timeline(
         tm_class=data.tm_class,
         tm_class_description=class_description_for(data.tm_class),
         is_multi_class=data.is_multi_class,
+        tm_usage_status=data.tm_usage_status,
+        tm_used_since_date=data.tm_used_since_date,
         tm_selected_classes=_parse_selected_classes(data.tm_selected_classes),
         application_class_descriptions=_parse_class_descriptions(data.application_class_description),
         applicant_address=data.applicant_address,
@@ -336,6 +338,8 @@ def create_tm_application(session: Session, application: TmApplicationCreate) ->
             tm_type=application.tm_type,
             tm_class=application.tm_class,
             is_multi_class=application.is_multi_class,
+            tm_usage_status=application.tm_usage_status,
+            tm_used_since_date=application.tm_used_since_date,
             tm_selected_classes=_serialize_selected_classes(application.tm_selected_classes),
             application_class_description=_serialize_class_descriptions(application.application_class_descriptions),
             client_id=application.client_id,
@@ -548,6 +552,10 @@ def update_tm_application(
         db_application.tm_name = update_dict["tm_name"]
     if "tm_type" in update_dict:
         db_application.tm_type = update_dict["tm_type"]
+    if "tm_usage_status" in update_dict:
+        db_application.tm_usage_status = update_dict["tm_usage_status"]
+    if "tm_used_since_date" in update_dict:
+        db_application.tm_used_since_date = update_dict["tm_used_since_date"]
     if "applicant_address" in update_dict:
         db_application.applicant_address = update_dict["applicant_address"]
     if "comments" in update_dict:
@@ -870,6 +878,8 @@ def get_tm_project_detail(session: Session, application_id: int) -> Optional[TmP
         tm_class=app_read.tm_class,
         tm_class_description=class_description_for(app_read.tm_class),
         is_multi_class=app_read.is_multi_class,
+        tm_usage_status=app_read.tm_usage_status,
+        tm_used_since_date=app_read.tm_used_since_date,
         tm_selected_classes=app_read.tm_selected_classes,
         application_class_descriptions=app_read.application_class_descriptions,
         applicant_address=app_read.applicant_address,

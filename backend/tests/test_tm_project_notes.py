@@ -36,6 +36,7 @@ def _create_application(session: Session):
             tm_name="Mark",
             tm_type="Wordmark",
             tm_class="5",
+            tm_usage_status="Proposed to be used",
             applicant_address="Address",
         ),
     )
@@ -97,6 +98,7 @@ def test_update_note_returns_none_for_wrong_application() -> None:
                 tm_name="OtherMark",
                 tm_type="Device/Logo",
                 tm_class="9",
+                tm_usage_status="Proposed to be used",
                 applicant_address="Other address",
             ),
         )

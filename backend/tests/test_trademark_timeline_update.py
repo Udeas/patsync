@@ -42,6 +42,7 @@ def test_partial_timeline_update_preserves_other_statuses(tm_session: Session):
             tm_name="Mark",
             tm_type="Wordmark",
             tm_class="5",
+            tm_usage_status="Proposed to be used",
             applicant_address="Address",
         ),
     )

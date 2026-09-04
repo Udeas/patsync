@@ -39,6 +39,7 @@ def _create_application(session: Session, application_number: str = "1234567"):
             tm_name="Mark",
             tm_type="Wordmark",
             tm_class="5",
+            tm_usage_status="Proposed to be used",
             applicant_address="Address",
         ),
     )
