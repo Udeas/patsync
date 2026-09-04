@@ -393,6 +393,74 @@ def _run_postgres_tm_migrations(conn) -> None:
             """
         )
     )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS applicant_type VARCHAR;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS tm_type VARCHAR;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS is_multi_class BOOLEAN NOT NULL DEFAULT FALSE;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS tm_selected_classes TEXT;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS application_class_description TEXT;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_project_note (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_custom_event (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                event_type VARCHAR NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option VARCHAR NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
 
 
 def _sqlite_column_exists(conn, table_name: str, column_name: str) -> bool:
@@ -605,6 +673,46 @@ def _run_sqlite_tm_migrations(conn) -> None:
         conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN attorney_id INTEGER"))
     if not _sqlite_column_exists(conn, "tm_application_data", "client_docket_no"):
         conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN client_docket_no TEXT"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "applicant_type"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN applicant_type TEXT"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "tm_type"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN tm_type TEXT"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "is_multi_class"):
+        conn.execute(
+            text("ALTER TABLE tm_application_data ADD COLUMN is_multi_class BOOLEAN NOT NULL DEFAULT 0")
+        )
+    if not _sqlite_column_exists(conn, "tm_application_data", "tm_selected_classes"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN tm_selected_classes TEXT"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "application_class_description"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN application_class_description TEXT"))
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_project_note (
+                id INTEGER PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_custom_event (
+                id INTEGER PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                event_type TEXT NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option TEXT NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
 
 
 def _seed_patent_statuses(conn, backend: str) -> None:
@@ -668,6 +776,12 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             conn.execute(
                 text(
                     "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+        if not _postgres_column_exists(conn, "patent_project", "proof_of_right_furnished"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN proof_of_right_furnished BOOLEAN NOT NULL DEFAULT FALSE"
                 )
             )
         if not _postgres_column_exists(conn, "patent_project", "is_archived"):
@@ -782,6 +896,42 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_custom_event (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    event_type VARCHAR NOT NULL,
+                    event_date DATE NOT NULL,
+                    reminder_option VARCHAR NOT NULL,
+                    reminder_date DATE,
+                    closure_date DATE,
+                    created_date TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_docket_entry (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    item_type VARCHAR NOT NULL,
+                    title VARCHAR NOT NULL,
+                    rule_reference VARCHAR NOT NULL,
+                    due_date DATE NOT NULL,
+                    is_internal_target BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_system_generated BOOLEAN NOT NULL DEFAULT TRUE,
+                    auto_satisfied BOOLEAN NOT NULL DEFAULT FALSE,
+                    closure_date DATE,
+                    created_date TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT uq_patent_docket_entry_project_item UNIQUE (project_id, item_type)
+                );
+                """
+            )
+        )
         return
 
     if _sqlite_column_exists(conn, "patent_project", "id"):
@@ -793,6 +943,12 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
             conn.execute(
                 text(
                     "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+        if not _sqlite_column_exists(conn, "patent_project", "proof_of_right_furnished"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN proof_of_right_furnished BOOLEAN NOT NULL DEFAULT 0"
                 )
             )
         if not _sqlite_column_exists(conn, "patent_project", "is_archived"):
@@ -883,6 +1039,42 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 project_id INTEGER NOT NULL REFERENCES patent_project(id),
                 note_text TEXT NOT NULL,
                 created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_custom_event (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                event_type TEXT NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option TEXT NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_docket_entry (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                item_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                rule_reference TEXT NOT NULL,
+                due_date DATE NOT NULL,
+                is_internal_target BOOLEAN NOT NULL DEFAULT 0,
+                is_system_generated BOOLEAN NOT NULL DEFAULT 1,
+                auto_satisfied BOOLEAN NOT NULL DEFAULT 0,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (project_id, item_type)
             );
             """
         )

@@ -12,8 +12,15 @@ class TmApplicationData(SQLModel, table=True):
     project_code: str = Field(nullable=False, unique=True, index=True)
     application_num: str = Field(nullable=False, unique=True, index=True)
     applicant_name: str = Field(nullable=False)
+    applicant_type: Optional[str] = Field(default=None)
     tm_name: str = Field(nullable=False)
+    tm_type: Optional[str] = Field(default=None)
     tm_class: str = Field(nullable=False)
+    is_multi_class: bool = Field(default=False)
+    tm_selected_classes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    application_class_description: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     client_id: Optional[int] = Field(default=None, foreign_key="patent_client.id")
     attorney_id: Optional[int] = Field(default=None, foreign_key="patent_agent.id")
     client_docket_no: Optional[str] = Field(default=None)
@@ -30,6 +37,34 @@ class TmApplicationData(SQLModel, table=True):
     last_status_updated_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
+class TmProjectNote(SQLModel, table=True):
+    __tablename__ = "tm_project_note"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: int = Field(nullable=False, foreign_key="tm_application_data.id", index=True)
+    note_text: str = Field(sa_column=Column(Text, nullable=False))
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class TmCustomEvent(SQLModel, table=True):
+    __tablename__ = "tm_custom_event"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: int = Field(nullable=False, foreign_key="tm_application_data.id", index=True)
+    event_type: str = Field(nullable=False)
+    event_date: date = Field(nullable=False)
+    reminder_option: str = Field(nullable=False)
+    reminder_date: Optional[date] = Field(default=None)
+    closure_date: Optional[date] = Field(default=None)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
     )
 
 

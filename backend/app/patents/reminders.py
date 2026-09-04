@@ -30,12 +30,19 @@ class NextPatentAction:
     due_date: date
 
 
-def _add_months(value: date, months: int) -> date:
+def add_months(value: date, months: int) -> date:
     month = value.month + months
     year = value.year + (month - 1) // 12
     month = (month - 1) % 12 + 1
     day = min(value.day, calendar.monthrange(year, month)[1])
     return date(year, month, day)
+
+
+# Back-compat alias: the docket-entries feature (app/patents/docket.py) also
+# imports this as the canonical calendar-month-add utility for statutory
+# deadline math, matching the FER-response / provisional-to-complete dates
+# computed below.
+_add_months = add_months
 
 
 def compute_next_patent_action(

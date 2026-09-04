@@ -26,11 +26,12 @@ def test_create_and_update_persists_tm_client_docket_no() -> None:
         created = create_tm_application(
             session,
             TmApplicationCreate(
-                project_code="TM1",
                 application_number="1234567",
                 application_date=date(2024, 1, 1),
                 applicant_name="Acme",
+                applicant_type="Company",
                 tm_name="AcmeMark",
+                tm_type="Wordmark",
                 tm_class="9",
                 applicant_address="Somewhere",
                 client_docket_no="TM-DOCKET-1",

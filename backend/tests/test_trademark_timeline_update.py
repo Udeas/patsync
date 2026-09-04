@@ -35,11 +35,12 @@ def test_partial_timeline_update_preserves_other_statuses(tm_session: Session):
     created = svc.create_tm_application(
         tm_session,
         TmApplicationCreate(
-            project_code="TM10001",
             application_number="1234567",
             application_date=date(2025, 1, 10),
             applicant_name="Client",
+            applicant_type="Individual",
             tm_name="Mark",
+            tm_type="Wordmark",
             tm_class="5",
             applicant_address="Address",
         ),
