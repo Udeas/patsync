@@ -151,7 +151,7 @@ def test_grant_creates_first_form27_entry_with_correct_due_date() -> None:
         entries = _form27_entries(updated)
         assert len(entries) == 1
         assert entries[0]["due_date"] == date(2027, 9, 30)
-        assert "IN-555" in entries[0]["title"]
+        assert entries[0]["title"] == "Form 27 - Working Statement Due (FY 2024-2025 to FY 2026-2027)"
         assert entries[0]["closure_date"] is None
 
 

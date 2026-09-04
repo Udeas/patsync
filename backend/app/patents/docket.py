@@ -188,9 +188,9 @@ def parse_form27_block_start(item_type: str) -> int | None:
         return None
 
 
-def _form27_title(grant_number: str, block_start_year: int, block_end_year: int) -> str:
+def _form27_title(block_start_year: int, block_end_year: int) -> str:
     return (
-        f"File Form 27 - Statement of Working for Patent No. {grant_number} "
+        f"Form 27 - Working Statement Due "
         f"(FY {block_start_year}-{block_start_year + 1} "
         f"to FY {block_end_year}-{block_end_year + 1})"
     )
@@ -210,7 +210,7 @@ def plan_form27_first_entry(*, grant_date: date, grant_number: str) -> DocketEnt
 
     return DocketEntryPlan(
         item_type=form27_item_type(block_start),
-        title=_form27_title(grant_number, block_start, block_end),
+        title=_form27_title(block_start, block_end),
         rule_reference=FORM27_RULE_REFERENCE,
         due_date=due_date,
     )
@@ -227,7 +227,7 @@ def plan_form27_next_entry(
     due_date = date(prior_due_date.year + 3, prior_due_date.month, prior_due_date.day)
     return DocketEntryPlan(
         item_type=form27_item_type(block_start),
-        title=_form27_title(grant_number, block_start, block_end),
+        title=_form27_title(block_start, block_end),
         rule_reference=FORM27_RULE_REFERENCE,
         due_date=due_date,
     )

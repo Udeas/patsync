@@ -712,10 +712,13 @@ def close_patent_docket_entry(
 
 
 def _docket_entry_reminder_row(e: PatentDocketEntry) -> dict:
+    # Title alone - rule_reference is already shown as its own column in the
+    # Docket Entries panel, so appending "(Rule X)" here just made every
+    # reminder line longer without adding information.
     return {
         "kind": "docket_entry",
         "fire_on": e.due_date,
-        "label": f"{e.title} ({e.rule_reference})",
+        "label": e.title,
     }
 
 
