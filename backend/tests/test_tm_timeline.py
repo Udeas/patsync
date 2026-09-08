@@ -32,6 +32,21 @@ def test_fer_followup_reminder_one_month_after_fer_issued():
     assert tl.upcoming_reminders[0].fire_on == add_one_calendar_month(fer_date)
 
 
+def test_fer_reminder_still_shows_when_overdue():
+    fer_date = date(2025, 3, 15)
+    states = [
+        (1, date(2025, 1, 1), STATUS_TM_APPLICATION_FILED),
+        (2, fer_date, STATUS_TM_FER_ISSUED),
+    ]
+    tl = build_timeline_for_tm_application(
+        states_ordered=states,
+        current_status_name=STATUS_TM_FER_ISSUED,
+        today=date(2026, 1, 1),
+    )
+    assert tl.fer_followup_due == add_one_calendar_month(fer_date)
+    assert any(r.kind == "fer_followup" for r in tl.upcoming_reminders)
+
+
 def test_no_fer_reminder_after_leaving_fer_status():
     states = [
         (1, date(2025, 1, 1), STATUS_TM_APPLICATION_FILED),
@@ -62,6 +77,23 @@ def test_hearing_reminder_three_days_before():
     fire_dates = [r.fire_on for r in tl.upcoming_reminders if r.kind == "hearing"]
     assert hearing - timedelta(days=3) in fire_dates
     assert len([r for r in tl.upcoming_reminders if r.kind == "hearing"]) == 1
+
+
+def test_hearing_reminder_still_shows_when_overdue():
+    hearing = date(2025, 10, 20)
+    states = [
+        (1, date(2025, 1, 1), STATUS_TM_APPLICATION_FILED),
+        (2, date(2025, 5, 1), STATUS_TM_FER_ISSUED),
+        (3, date(2025, 7, 1), "FER Response Submitted"),
+        (4, hearing, STATUS_TM_HEARING),
+    ]
+    tl = build_timeline_for_tm_application(
+        states_ordered=states,
+        current_status_name=STATUS_TM_HEARING,
+        today=date(2026, 1, 1),
+    )
+    fire_dates = [r.fire_on for r in tl.upcoming_reminders if r.kind == "hearing"]
+    assert hearing - timedelta(days=3) in fire_dates
 
 
 def test_add_years_leap_day_clamps_to_feb_28():

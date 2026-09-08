@@ -70,9 +70,11 @@ def build_timeline_for_tm_application(
     - FER Issued date + 1 month (reminder on that follow-up date).
     - Hearing Issued date: reminder 3 days before the hearing due date.
     - Registered: renewal due 10 years after the application (filing) date -
-      the next step once the mark is registered. Not gated on today, unlike
-      the two reminders above, so an overdue renewal keeps showing instead
-      of silently disappearing.
+      the next step once the mark is registered.
+    None of these are gated on today - an overdue reminder keeps showing
+    (as overdue) instead of silently disappearing once its date passes.
+    They're gated on current_status_name instead, so a reminder correctly
+    drops once the project moves past the status it belongs to.
     """
     filing = _date_for_status(states_ordered, "Application filed")
     fer_issued = _date_for_status(states_ordered, STATUS_TM_FER_ISSUED)
@@ -83,7 +85,7 @@ def build_timeline_for_tm_application(
     upcoming: List[ReminderComputation] = []
 
     if current_status_name != STATUS_TM_REGISTERED and fer_issued and fer_followup:
-        if current_status_name == STATUS_TM_FER_ISSUED and fer_followup >= today:
+        if current_status_name == STATUS_TM_FER_ISSUED:
             upcoming.append(
                 ReminderComputation(
                     kind="fer_followup",
@@ -94,14 +96,13 @@ def build_timeline_for_tm_application(
 
     if current_status_name == STATUS_TM_HEARING and hearing:
         hearing_reminder = hearing - timedelta(days=3)
-        if hearing_reminder >= today:
-            upcoming.append(
-                ReminderComputation(
-                    kind="hearing",
-                    fire_on=hearing_reminder,
-                    label="Hearing in 3 days",
-                )
+        upcoming.append(
+            ReminderComputation(
+                kind="hearing",
+                fire_on=hearing_reminder,
+                label="Hearing in 3 days",
             )
+        )
 
     if current_status_name == STATUS_TM_REGISTERED and renewal_due:
         upcoming.append(
