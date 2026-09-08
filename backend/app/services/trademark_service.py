@@ -54,7 +54,35 @@ def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
-def _generate_next_project_code(session: Session) -> str:
+def _generate_next_project_code(session: Session, client_id: Optional[int]) -> str:
+    """Docket = client_code + sequential number (e.g. ABC01, ABC02, ...),
+    tracked per client_id so numbering never collides or is reused across
+    clients. Falls back to the legacy global TM<4-digit> scheme when no
+    client is selected."""
+    if client_id is None:
+        return _generate_next_legacy_project_code(session)
+
+    client = session.get(PatentClient, client_id)
+    if client is None:
+        raise ValueError("client_id does not reference an existing client")
+
+    return _generate_next_client_project_code(session, client_id, client.client_code)
+
+
+def _generate_next_client_project_code(session: Session, client_id: int, client_code: str) -> str:
+    pattern = re.compile(rf"^{re.escape(client_code)}(\d{{2,}})$")
+    existing_codes = session.exec(
+        select(TmApplicationData.project_code).where(TmApplicationData.client_id == client_id)
+    ).all()
+    max_num = 0
+    for code in existing_codes:
+        match = pattern.match(code or "")
+        if match:
+            max_num = max(max_num, int(match.group(1)))
+    return f"{client_code}{max_num + 1:02d}"
+
+
+def _generate_next_legacy_project_code(session: Session) -> str:
     existing_codes = session.exec(select(TmApplicationData.project_code)).all()
     max_num = 0
     for code in existing_codes:
@@ -331,7 +359,7 @@ def create_tm_application(session: Session, application: TmApplicationCreate) ->
 
     for _ in range(5):
         db_application = TmApplicationData(
-            project_code=_generate_next_project_code(session),
+            project_code=_generate_next_project_code(session, application.client_id),
             application_num=application.application_number,
             applicant_name=application.applicant_name,
             applicant_type=application.applicant_type,
