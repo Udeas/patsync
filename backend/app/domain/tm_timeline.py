@@ -90,7 +90,7 @@ def build_timeline_for_tm_application(
                 ReminderComputation(
                     kind="fer_followup",
                     fire_on=fer_followup,
-                    label="FER follow-up due (1 month after FER Issued)",
+                    label="FER Response Due",
                 )
             )
 
