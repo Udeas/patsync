@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+class PipelineRunRequest(BaseModel):
+    # "docket_only" fetches/imports cases and saves docket entries only -
+    # no Google Calendar events, no email drafts.
+    mode: Literal["complete", "docket_only"] = "complete"
 
 
 class WorkStatusUpdateRequest(BaseModel):

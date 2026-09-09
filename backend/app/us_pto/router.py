@@ -22,6 +22,7 @@ from app.us_pto.schemas import (
     DocCodesUpdateRequest,
     DuplicateModeRequest,
     JobStatusResponse,
+    PipelineRunRequest,
     WorkStatusUpdateRequest,
 )
 from app.us_pto.steps.calendar_events import (
@@ -167,9 +168,10 @@ def run_step_4():
 
 
 @router.post("/automation/pipeline/run")
-def run_complete_pipeline():
-    job = create_job("Complete Pipeline")
-    run_job_async(job, run_pipeline)
+def run_complete_pipeline(body: PipelineRunRequest = PipelineRunRequest()):
+    job_name = "Docket Only" if body.mode == "docket_only" else "Complete Pipeline"
+    job = create_job(job_name)
+    run_job_async(job, lambda j: run_pipeline(j, mode=body.mode))
     return {"job_id": job.job_id}
 
 

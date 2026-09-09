@@ -142,10 +142,26 @@ def _entry_to_ui_dict(entry: UsptoTracker) -> dict:
     }
 
 
+_db_initialized = False
+
+
 def init_db() -> None:
+    """Runs schema migrations at most once per process. Called before nearly
+    every repository operation as a defensive guard (this module can run
+    standalone), but re-running the full migration DDL on every call - as
+    happened before this cache was added - meant every single row insert
+    re-executed ~60+ statements including ALTER TABLE/ALTER COLUMN calls
+    that require ACCESS EXCLUSIVE locks, causing multi-row fetches to hang
+    indefinitely under any lock contention. The app's own startup hook
+    (app/main.py) already runs migrations once; this guard just prevents
+    every subsequent call in this module from redoing that work."""
+    global _db_initialized
+    if _db_initialized:
+        return
     from app.database import run_schema_migrations
 
     run_schema_migrations()
+    _db_initialized = True
 
 
 def count_entries() -> int:

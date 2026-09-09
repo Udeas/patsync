@@ -40,10 +40,11 @@ SQLITE_SOURCE = os.environ.get(
 
 # Google Calendar ID used by Steps 2 and 4 (API). Set US_PTO_CALENDAR_ID in .env or below.
 CALENDAR_ID = os.environ.get("US_PTO_CALENDAR_ID", os.environ.get("STEM_CALENDAR_ID", ""))
-# Friendly label shown in the UI (Run Automation, View US Dockets). Set US_PTO_CALENDAR_DISPLAY_NAME in .env.
+# Friendly label shown in the UI (Run Automation, View US Dockets). Set US_PTO_CALENDAR_DISPLAY_NAME
+# in .env for a human-readable name; left unset, the frontend falls back to showing CALENDAR_ID itself.
 CALENDAR_DISPLAY_NAME = os.environ.get(
     "US_PTO_CALENDAR_DISPLAY_NAME",
-    os.environ.get("STEM_CALENDAR_DISPLAY_NAME", "Test Calendar"),
+    os.environ.get("STEM_CALENDAR_DISPLAY_NAME", ""),
 )
 CALENDAR_TOKEN_FILE = os.path.join(CRED_DIR, "token.json")
 GMAIL_DRAFTS_TOKEN_FILE = os.path.join(CRED_DIR, "token_gmail_drafts.json")

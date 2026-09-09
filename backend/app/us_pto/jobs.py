@@ -60,16 +60,20 @@ def run_job_async(job: UsPtoJob, runner: Callable[[UsPtoJob], dict[str, Any]]) -
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def run_pipeline(job: UsPtoJob) -> dict[str, Any]:
+def run_pipeline(job: UsPtoJob, mode: str = "complete") -> dict[str, Any]:
+    """mode="docket_only" fetches/imports cases and saves docket entries only -
+    Steps 2 (Calendar) and 3 (Drafts) are skipped entirely, so nothing is
+    created in Google Calendar or Gmail."""
     from app.us_pto.steps.calendar_events import create_events_for_ui
     from app.us_pto.steps.email_drafts import create_drafts_for_ui
     from app.us_pto.steps.fetch_email import run_fetch_for_ui
 
     steps: list[tuple[str, str, Callable[[UsPtoJob], dict[str, Any]]]] = [
         ("1", "Step 1: Email Fetch", run_fetch_for_ui),
-        ("2", "Step 2: Calendar", lambda j: create_events_for_ui("all", job=j)),
-        ("3", "Step 3: Drafts", create_drafts_for_ui),
     ]
+    if mode != "docket_only":
+        steps.append(("2", "Step 2: Calendar", lambda j: create_events_for_ui("all", job=j)))
+        steps.append(("3", "Step 3: Drafts", create_drafts_for_ui))
     results: list[dict[str, Any]] = []
     total = len(steps)
 
@@ -95,5 +99,6 @@ def run_pipeline(job: UsPtoJob) -> dict[str, Any]:
 
     job.progress_range = (0.0, 1.0)
     job.progress = 1.0
-    job.message = "Complete pipeline finished."
-    return {"status": "success", "message": "Complete pipeline finished.", "steps": results}
+    finished_message = "Docket-only run finished." if mode == "docket_only" else "Complete pipeline finished."
+    job.message = finished_message
+    return {"status": "success", "message": finished_message, "steps": results}

@@ -9,7 +9,19 @@ from app.tm_status_catalog import TM_STATUS_SEED
 load_dotenv()
 
 sqlite_url = os.getenv("DATABASE_URL")
-engine = create_engine(sqlite_url, echo=True)
+
+# Without these, a blocked lock acquisition (e.g. an ALTER TABLE stuck behind
+# a stale "idle in transaction" session) waits forever - there's no default
+# statement/lock timeout on Postgres. Bounding both means schema-migration
+# DDL fails fast with a clear error instead of hanging the request/thread
+# indefinitely. pool_pre_ping avoids surfacing a stale pooled connection
+# (e.g. one Supabase silently dropped) as a hang on first use.
+_connect_args = (
+    {"options": "-c statement_timeout=30000 -c lock_timeout=10000"}
+    if sqlite_url and sqlite_url.startswith("postgres")
+    else {}
+)
+engine = create_engine(sqlite_url, echo=True, pool_pre_ping=True, connect_args=_connect_args)
 
 
 def _run_postgres_migrations(conn) -> None:
