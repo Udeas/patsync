@@ -12,6 +12,7 @@ from app.us_pto.config import (
     WORK_STATUS_UNDER_EXTENSION,
 )
 from app.us_pto.database import get_us_pto_engine
+from app.us_pto.doc_code_rules import build_calendar_reminder_rules, list_doc_code_rules
 from app.us_pto.doc_codes import code_requires_email_draft, get_tracked_doc_codes
 from app.us_pto.due_dates import compute_due_dates
 from app.us_pto.models import UsptoTracker
@@ -88,7 +89,9 @@ def _is_done_status(value: str | None) -> bool:
 
 
 def _tracked_code_set() -> set[str]:
-    return {normalize_doc_code(c) for c in get_tracked_doc_codes()}
+    tracked = {normalize_doc_code(c) for c in get_tracked_doc_codes()}
+    tracked.update(rule.doc_code for rule in list_doc_code_rules())
+    return tracked
 
 
 def _entry_is_tracked(entry: UsptoTracker) -> bool:
@@ -317,11 +320,9 @@ def list_entries_for_ui(
     init_db()
     with Session(get_us_pto_engine()) as session:
         statement = select(UsptoTracker).order_by(UsptoTracker.id)
-        tracked = get_tracked_doc_codes()
+        tracked = _tracked_code_set()
         if tracked:
-            statement = statement.where(
-                UsptoTracker.doc_code.in_([normalize_doc_code(c) for c in tracked])
-            )
+            statement = statement.where(UsptoTracker.doc_code.in_(tracked))
         rows = list(session.scalars(statement).all())
         rows = [
             row
@@ -440,12 +441,19 @@ def list_calendar_candidates(*, duplicate_mode: str = "all") -> list[dict]:
 
     init_db()
     entries = list_entries()
+    db_rules_by_code = {rule.doc_code: rule for rule in list_doc_code_rules()}
     candidates: list[dict] = []
     accepted_keys: set[tuple[str, str]] = set()
 
     for entry in entries:
         doc_code = normalize_doc_code(entry["doc_code"])
-        rules = get_rules_for_tracked_doc_code(doc_code)
+        db_rule = db_rules_by_code.get(doc_code)
+        if db_rule:
+            rules = build_calendar_reminder_rules(db_rule)
+            rule_source = "doc_code_rule"
+        else:
+            rules = get_rules_for_tracked_doc_code(doc_code)
+            rule_source = "legacy"
         if not rules:
             continue
         if entry.get("calendar_event_ids"):
@@ -471,6 +479,7 @@ def list_calendar_candidates(*, duplicate_mode: str = "all") -> list[dict]:
                 "entry_id": entry["id"],
                 "row_data": row_data,
                 "rules": rules,
+                "rule_source": rule_source,
             }
         )
     return candidates

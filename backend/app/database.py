@@ -1169,6 +1169,48 @@ def _run_uspto_tracker_migration(conn, backend: str) -> None:
             conn.execute(text("ALTER TABLE uspto_tracker ADD COLUMN completion_date TEXT"))
 
 
+def _run_doc_code_rules_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS doc_code_rules (
+                    id SERIAL PRIMARY KEY,
+                    doc_code VARCHAR(32) NOT NULL,
+                    final_due_months INTEGER NOT NULL,
+                    final_due_extension_months INTEGER NOT NULL,
+                    email_template VARCHAR(64),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_doc_code_rules_doc_code UNIQUE (doc_code)
+                );
+                """
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS doc_code_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    doc_code TEXT NOT NULL,
+                    final_due_months INTEGER NOT NULL,
+                    final_due_extension_months INTEGER NOT NULL,
+                    email_template TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE (doc_code)
+                );
+                """
+            )
+        )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_doc_code_rules_doc_code ON doc_code_rules (doc_code)"
+        )
+    )
+
+
 def _run_users_migration(conn, backend: str) -> None:
     if backend == "postgresql":
         conn.execute(
@@ -1272,6 +1314,7 @@ def run_schema_migrations():
             _run_sqlite_migrations(conn)
         _run_patent_metadata_migrations(conn, backend)
         _run_uspto_tracker_migration(conn, backend)
+        _run_doc_code_rules_migration(conn, backend)
         _run_users_migration(conn, backend)
         _run_audit_migration(conn, backend)
         _seed_patent_statuses(conn, backend)

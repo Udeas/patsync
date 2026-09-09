@@ -5,8 +5,15 @@ from fastapi import APIRouter, HTTPException, Query
 import threading
 
 from app.us_pto.config import CALENDAR_DISPLAY_NAME, CALENDAR_ID, WORK_STATUS_CHOICES
+from app.us_pto.doc_code_rules import (
+    create_doc_code_rule,
+    delete_doc_code_rule,
+    list_doc_code_rules,
+    list_doc_codes_in_use,
+)
 from app.us_pto.doc_codes import (
     config_for_api,
+    get_email_template_keys,
     load_doc_codes_config,
     save_doc_codes_config,
     yaml_email_template_value,
@@ -19,6 +26,7 @@ from app.us_pto.repository import (
     update_work_status_batch,
 )
 from app.us_pto.schemas import (
+    DocCodeRuleCreateRequest,
     DocCodesUpdateRequest,
     DuplicateModeRequest,
     JobStatusResponse,
@@ -98,6 +106,51 @@ def put_doc_codes(body: DocCodesUpdateRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return config_for_api()
+
+
+def _doc_code_rules_payload() -> dict:
+    rules = list_doc_code_rules()
+    rule_codes = {rule.doc_code for rule in rules}
+    available = [code for code in list_doc_codes_in_use() if code not in rule_codes]
+    return {
+        "rules": [
+            {
+                "doc_code": rule.doc_code,
+                "final_due_months": rule.final_due_months,
+                "final_due_extension_months": rule.final_due_extension_months,
+                "email_template": rule.email_template,
+            }
+            for rule in rules
+        ],
+        "available_doc_codes": available,
+        "email_template_keys": get_email_template_keys(),
+    }
+
+
+@router.get("/doc-code-rules")
+def get_doc_code_rules():
+    return _doc_code_rules_payload()
+
+
+@router.post("/doc-code-rules")
+def post_doc_code_rule(body: DocCodeRuleCreateRequest):
+    try:
+        create_doc_code_rule(
+            body.doc_code,
+            body.final_due_months,
+            body.final_due_extension_months,
+            body.email_template,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _doc_code_rules_payload()
+
+
+@router.delete("/doc-code-rules/{doc_code}")
+def delete_doc_code_rule_endpoint(doc_code: str):
+    if not delete_doc_code_rule(doc_code):
+        raise HTTPException(status_code=404, detail=f"No rule found for doc code {doc_code}")
+    return _doc_code_rules_payload()
 
 
 @router.get("/entries")

@@ -26,15 +26,23 @@ def get_master_file_lock_status() -> dict:
     return {"is_ready": True, "message": ""}
 
 
-def build_event(row_data: dict[str, str], months: int, label: str, due_months: int) -> dict:
+def build_event(
+    row_data: dict[str, str],
+    months: int,
+    label: str,
+    due_months: int,
+    *,
+    bracket_label: bool = True,
+) -> dict:
     event_date = datetime.strptime(row_data["Event Date"], "%m/%d/%Y")
     reminder_date = event_date + relativedelta(months=months)
     due_date = event_date + relativedelta(months=due_months)
     date_str = reminder_date.strftime("%Y-%m-%d")
+    label_display = f"[{label}]" if bracket_label else label
 
     return {
         "summary": (
-            f"{row_data['Docket No.']} [{label}] | {row_data['Doc Code']} | "
+            f"{row_data['Docket No.']} {label_display} | {row_data['Doc Code']} | "
             f"App {row_data['Application No.']} | Due {due_date.strftime('%b %d, %Y')}"
         ),
         "description": "\n".join([
@@ -67,7 +75,10 @@ def build_preview_rows(candidates: list[dict]) -> list[dict]:
     for candidate in candidates:
         rules = candidate["rules"]
         labels = ", ".join(rule[1] for rule in rules)
-        first_event = build_event(candidate["row_data"], rules[0][0], rules[0][1], rules[0][2])
+        bracket_label = candidate.get("rule_source") != "doc_code_rule"
+        first_event = build_event(
+            candidate["row_data"], rules[0][0], rules[0][1], rules[0][2], bracket_label=bracket_label
+        )
         preview_rows.append({
             "row_index": candidate["entry_id"],
             "docket_no": candidate["row_data"]["Docket No."],
@@ -109,10 +120,13 @@ def create_events_for_candidates(
         print(f"Creating events for entry {entry_id} ({index}/{total})")
         created_ids = []
         created_labels = []
+        bracket_label = candidate.get("rule_source") != "doc_code_rule"
 
         try:
             for months, label, due_months in candidate["rules"]:
-                event_body = build_event(candidate["row_data"], months, label, due_months)
+                event_body = build_event(
+                    candidate["row_data"], months, label, due_months, bracket_label=bracket_label
+                )
                 result = service.events().insert(calendarId=CALENDAR_ID, body=event_body).execute()
                 created_ids.append(result["id"])
                 created_labels.append(label)

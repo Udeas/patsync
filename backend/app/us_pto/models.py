@@ -23,3 +23,15 @@ class UsptoTracker(SQLModel, table=True):
     is_closure_done: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DocCodeRule(SQLModel, table=True):
+    __tablename__ = "doc_code_rules"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    doc_code: str = Field(max_length=32, unique=True, index=True)
+    final_due_months: int
+    final_due_extension_months: int
+    email_template: Optional[str] = Field(default=None, max_length=64)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

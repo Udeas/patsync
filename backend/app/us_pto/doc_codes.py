@@ -78,8 +78,18 @@ def normalize_email_template_value(raw: Any) -> str | None:
 
 
 def get_email_template_for_code(doc_code: str) -> str | None:
-    """YAML-configured email template key for a doc code, or None."""
+    """Doc-code-rule email template if the code has a rule, else the legacy
+    YAML tracked_doc_codes mapping. Once a doc code has a rule, that rule is
+    the sole source of truth for it - no YAML fallback - so clearing the
+    template on the rule means "no email", not "check the old config"."""
     normalized = str(doc_code or "").strip().upper()
+
+    from app.us_pto.doc_code_rules import get_doc_code_rule
+
+    db_rule = get_doc_code_rule(normalized)
+    if db_rule is not None:
+        return normalize_email_template_value(db_rule.email_template)
+
     config = load_doc_codes_config()
     for item in config.get("tracked_doc_codes", []):
         code = str(item.get("code", "")).strip().upper()
@@ -141,7 +151,12 @@ def build_reminder_rules() -> dict[str, list[tuple[int, str, int]]]:
 
 def is_tracked_doc_code(doc_code: str) -> bool:
     normalized = str(doc_code or "").strip().upper()
-    return normalized in get_tracked_doc_codes()
+    if normalized in get_tracked_doc_codes():
+        return True
+
+    from app.us_pto.doc_code_rules import get_doc_code_rule
+
+    return get_doc_code_rule(normalized) is not None
 
 
 def get_rules_for_doc_code(doc_code: str) -> list[tuple[int, str, int]] | None:

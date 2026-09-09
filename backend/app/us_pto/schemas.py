@@ -45,3 +45,17 @@ class TrackedDocCodeItem(BaseModel):
 
 class DocCodesUpdateRequest(BaseModel):
     tracked_doc_codes: list[TrackedDocCodeItem]
+
+
+class DocCodeRuleItem(BaseModel):
+    doc_code: str
+    final_due_months: int
+    final_due_extension_months: int
+    email_template: str | None = None
+
+
+class DocCodeRuleCreateRequest(BaseModel):
+    doc_code: str
+    final_due_months: int
+    final_due_extension_months: int
+    email_template: str | None = None
