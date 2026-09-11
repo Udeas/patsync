@@ -230,6 +230,36 @@ def insert_entries_from_rows(rows: list[dict]) -> tuple[int, int]:
     return inserted, skipped_duplicates
 
 
+def recompute_due_dates_for_doc_code(doc_code: str) -> int:
+    """Re-run compute_due_dates against every existing (non-Done) row for
+    doc_code, e.g. after a DocCodeRule's months/extension changed and the
+    user chose to apply that change retroactively rather than just to new
+    entries going forward. Returns the number of rows whose final_due_date
+    actually changed."""
+    init_db()
+    normalized = normalize_doc_code(doc_code)
+    updated = 0
+    with Session(get_us_pto_engine()) as session:
+        rows = list(
+            session.scalars(
+                select(UsptoTracker).where(UsptoTracker.doc_code == normalized)
+            ).all()
+        )
+        for entry in rows:
+            if _is_done_status(entry.work_status):
+                continue
+            final_due_date_str, _due_rows = compute_due_dates(entry.doc_code, entry.event_date)
+            new_due = _parse_due_date(final_due_date_str)
+            if new_due != entry.final_due_date:
+                entry.final_due_date = new_due
+                entry.updated_at = _now()
+                session.add(entry)
+                updated += 1
+        if updated:
+            session.commit()
+    return updated
+
+
 def get_entry(entry_id: int) -> dict | None:
     init_db()
     with Session(get_us_pto_engine()) as session:
@@ -308,6 +338,22 @@ def sync_email_not_required_for_ineligible() -> int:
         if updated:
             session.commit()
     return updated
+
+
+def list_visible_doc_codes() -> list[str]:
+    """Doc codes for the View US Dockets filter dropdown - restricted to codes
+    that can actually appear as a row there: present in uspto_tracker, tracked
+    (via doc_codes.yaml or a doc_code_rule - same set list_entries_for_ui
+    filters by), and not explicitly excluded (e.g. ABN)."""
+    init_db()
+    tracked = _tracked_code_set()
+    with Session(get_us_pto_engine()) as session:
+        rows = session.scalars(select(UsptoTracker.doc_code).distinct()).all()
+    codes = {normalize_doc_code(c) for c in rows if c}
+    if tracked:
+        codes &= tracked
+    codes -= DOCKET_EXCLUDED_DOC_CODES
+    return sorted(codes)
 
 
 def list_entries_for_ui(

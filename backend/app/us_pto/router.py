@@ -10,6 +10,7 @@ from app.us_pto.doc_code_rules import (
     delete_doc_code_rule,
     list_doc_code_rules,
     list_doc_codes_in_use,
+    update_doc_code_rule,
 )
 from app.us_pto.doc_codes import (
     config_for_api,
@@ -23,10 +24,13 @@ from app.us_pto.config import WORK_STATUS_DONE
 from app.us_pto.repository import (
     get_automation_pending,
     list_entries_for_ui,
+    list_visible_doc_codes,
+    recompute_due_dates_for_doc_code,
     update_work_status_batch,
 )
 from app.us_pto.schemas import (
     DocCodeRuleCreateRequest,
+    DocCodeRuleUpdateRequest,
     DocCodesUpdateRequest,
     DuplicateModeRequest,
     JobStatusResponse,
@@ -64,6 +68,14 @@ def get_config():
             {"key": "step-4", "label": "Step-4: Mark closed items and update calendar"},
         ],
     }
+
+
+@router.get("/doc-codes/in-use")
+def get_doc_codes_in_use():
+    """Doc codes for the View US Dockets filter dropdown: only codes that can
+    actually appear as a row there (tracked + present in uspto_tracker), not
+    every code ever parsed from email."""
+    return {"doc_codes": list_visible_doc_codes()}
 
 
 @router.get("/doc-codes")
@@ -144,6 +156,24 @@ def post_doc_code_rule(body: DocCodeRuleCreateRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _doc_code_rules_payload()
+
+
+@router.put("/doc-code-rules/{doc_code}")
+def put_doc_code_rule(doc_code: str, body: DocCodeRuleUpdateRequest):
+    try:
+        update_doc_code_rule(
+            doc_code,
+            body.final_due_months,
+            body.final_due_extension_months,
+            body.email_template,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    due_dates_updated_count = (
+        recompute_due_dates_for_doc_code(doc_code) if body.apply_to_existing else 0
+    )
+    return {**_doc_code_rules_payload(), "due_dates_updated_count": due_dates_updated_count}
 
 
 @router.delete("/doc-code-rules/{doc_code}")

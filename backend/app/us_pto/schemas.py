@@ -59,3 +59,13 @@ class DocCodeRuleCreateRequest(BaseModel):
     final_due_months: int
     final_due_extension_months: int
     email_template: str | None = None
+
+
+class DocCodeRuleUpdateRequest(BaseModel):
+    final_due_months: int
+    final_due_extension_months: int
+    email_template: str | None = None
+    # False (default): the new months/extension only apply to entries
+    # inserted from now on. True: also recompute final_due_date on existing
+    # uspto_tracker rows for this doc code (skipping ones already Done).
+    apply_to_existing: bool = False

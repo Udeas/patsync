@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -112,6 +113,32 @@ def create_doc_code_rule(
             final_due_extension_months=final_due_extension_months,
             email_template=template_key,
         )
+        session.add(rule)
+        session.commit()
+        session.refresh(rule)
+        return rule
+
+
+def update_doc_code_rule(
+    doc_code: str,
+    final_due_months: int,
+    final_due_extension_months: int,
+    email_template: str | None = None,
+) -> DocCodeRule:
+    normalized, template_key = _validate_rule_input(
+        doc_code, final_due_months, final_due_extension_months, email_template
+    )
+    _init_db()
+    with Session(get_us_pto_engine()) as session:
+        rule = session.scalars(
+            select(DocCodeRule).where(DocCodeRule.doc_code == normalized)
+        ).first()
+        if not rule:
+            raise ValueError(f"no rule found for doc code {normalized}")
+        rule.final_due_months = final_due_months
+        rule.final_due_extension_months = final_due_extension_months
+        rule.email_template = template_key
+        rule.updated_at = datetime.utcnow()
         session.add(rule)
         session.commit()
         session.refresh(rule)

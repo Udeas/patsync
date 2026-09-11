@@ -208,7 +208,44 @@ def parsed_rows_for_api(rows: list[dict]) -> list[dict]:
     return api_rows
 
 
+def _select_mailbox(imap: imaplib.IMAP4_SSL) -> bool:
+    status, _ = imap.select(IMAP_MAILBOX, readonly=False)
+    if status == "OK":
+        return True
+    _, mailboxes = imap.list()
+    found = None
+    for mailbox in mailboxes or []:
+        mailbox_str = mailbox.decode() if isinstance(mailbox, bytes) else str(mailbox)
+        if IMAP_MAILBOX in mailbox_str:
+            matches = re.findall(r'"(.+)"$', mailbox_str)
+            if matches:
+                found = matches[0]
+                break
+    if found:
+        imap.select(found, readonly=False)
+        return True
+    print(f"Mailbox '{IMAP_MAILBOX}' not found.")
+    return False
+
+
 def fetch_emails(job=None) -> tuple[list[dict], int]:
+    return _fetch_emails_matching("UNSEEN", "unseen message(s)", job=job)
+
+
+def fetch_emails_since(since_date, job=None) -> tuple[list[dict], int]:
+    """Rebuild-from-scratch scan: every message in the mailbox received on or
+    after since_date (a date/datetime), regardless of its \\Seen flag. Unlike
+    fetch_emails() (which only ever looks at UNSEEN mail for incremental
+    day-to-day polling), this is meant for re-importing a date range after
+    the docket table has been cleared, since by then everything in the
+    mailbox is already marked \\Seen from prior runs."""
+    criteria = f'(SINCE "{since_date.strftime("%d-%b-%Y")}")'
+    return _fetch_emails_matching(
+        criteria, f"message(s) since {since_date.isoformat()}", job=job
+    )
+
+
+def _fetch_emails_matching(search_criteria: str, description: str, job=None) -> tuple[list[dict], int]:
     if not IMAP_USERNAME or not IMAP_PASSWORD:
         raise RuntimeError(
             "Email credentials not configured. Set US_PTO_IMAP_USERNAME and US_PTO_IMAP_PASSWORD."
@@ -220,33 +257,19 @@ def fetch_emails(job=None) -> tuple[list[dict], int]:
     imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=30)
     imap.login(IMAP_USERNAME, IMAP_PASSWORD)
 
-    status, _ = imap.select(IMAP_MAILBOX, readonly=False)
-    if status != "OK":
-        _, mailboxes = imap.list()
-        found = None
-        for mailbox in mailboxes or []:
-            mailbox_str = mailbox.decode() if isinstance(mailbox, bytes) else str(mailbox)
-            if IMAP_MAILBOX in mailbox_str:
-                matches = re.findall(r'"(.+)"$', mailbox_str)
-                if matches:
-                    found = matches[0]
-                    break
-        if found:
-            imap.select(found, readonly=False)
-        else:
-            print(f"Mailbox '{IMAP_MAILBOX}' not found.")
-            imap.logout()
-            return [], 0
+    if not _select_mailbox(imap):
+        imap.logout()
+        return [], 0
 
-    _, message_ids = imap.search(None, "UNSEEN")
+    _, message_ids = imap.search(None, search_criteria)
     ids = message_ids[0].split()
     if not ids:
-        print("No unseen messages.")
+        print(f"No {description} found.")
         imap.logout()
         return [], 0
 
     total = len(ids)
-    print(f"Found {total} unseen message(s).")
+    print(f"Found {total} {description}.")
     all_rows = []
     unparsed_count = 0
     seen_mark_failures = 0
