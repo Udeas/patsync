@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlmodel import Session
 
 from app.us_pto.config import (
@@ -292,18 +292,37 @@ def list_entries(*, doc_codes: list[str] | None = None) -> list[dict]:
 
 
 def _apply_overdue_extension_updates(session: Session, rows: list[UsptoTracker]) -> bool:
+    """Flip overdue, still-open rows to Under Extension.
+
+    Writes via a single guarded UPDATE (re-checking work_status in SQL at
+    write time) rather than ORM read-then-write on the possibly-stale `rows`
+    snapshot - otherwise a concurrent close (e.g. a user marking a row Done/
+    Closed while this runs) gets silently clobbered back to Under Extension
+    once this commits.
+    """
     today = date.today()
-    changed = False
-    for entry in rows:
-        if not entry.final_due_date or entry.final_due_date >= today:
-            continue
-        if _is_finished_status(entry.work_status):
-            continue
-        if entry.work_status != WORK_STATUS_UNDER_EXTENSION:
-            entry.work_status = WORK_STATUS_UNDER_EXTENSION
-            entry.updated_at = _now()
-            session.add(entry)
-            changed = True
+    candidate_ids = [
+        entry.id
+        for entry in rows
+        if entry.id is not None
+        and entry.final_due_date
+        and entry.final_due_date < today
+        and entry.work_status != WORK_STATUS_UNDER_EXTENSION
+        and not _is_finished_status(entry.work_status)
+    ]
+    if not candidate_ids:
+        return False
+
+    result = session.execute(
+        update(UsptoTracker)
+        .where(UsptoTracker.id.in_(candidate_ids))
+        .where(UsptoTracker.final_due_date.is_not(None))
+        .where(UsptoTracker.final_due_date < today)
+        .where(func.upper(UsptoTracker.work_status).notin_([WORK_STATUS_DONE.upper(), WORK_STATUS_CLOSED.upper()]))
+        .where(UsptoTracker.work_status != WORK_STATUS_UNDER_EXTENSION)
+        .values(work_status=WORK_STATUS_UNDER_EXTENSION, updated_at=_now())
+    )
+    changed = result.rowcount > 0
     if changed:
         session.commit()
     return changed
