@@ -43,7 +43,7 @@ from app.schemas.trademark import (
     TmReminderRead,
     TmStatusRead,
 )
-from app.tm_status_catalog import STATUS_ID_TM_APPLICATION_FILED
+from app.tm_status_catalog import STATUS_ID_TM_APPLICATION_FILED, STATUS_TM_HEARING
 from app.audit.service import record_status_change
 
 
@@ -270,6 +270,18 @@ def _custom_event_reminders_bulk(
     return dict(grouped)
 
 
+def _display_current_status(
+    is_under_hearing: bool, status_name: str, states_ordered: List[Tuple[int, date, str]]
+) -> str:
+    """Manual 'Under Hearing' flag only overrides the displayed status while
+    the real Hearing Issued milestone hasn't been dated yet - once that date
+    is entered the normal timeline-derived status takes over as usual."""
+    hearing_filled = any(name == STATUS_TM_HEARING for _, _, name in states_ordered)
+    if is_under_hearing and not hearing_filled:
+        return "Under Hearing"
+    return status_name
+
+
 def _read_model_with_timeline(
     session: Session,
     data: TmApplicationData,
@@ -321,7 +333,10 @@ def _read_model_with_timeline(
         client_docket_no=data.client_docket_no,
         client=client_summary,
         attorney=attorney_summary,
-        application_current_status=status.status,
+        application_current_status=_display_current_status(
+            data.is_under_hearing, status.status, states_ordered
+        ),
+        is_under_hearing=data.is_under_hearing,
         comments=data.comments,
         filing_date=tl.filing_date,
         fer_followup_due=tl.fer_followup_due,
@@ -918,6 +933,7 @@ def get_tm_project_detail(session: Session, application_id: int) -> Optional[TmP
         client=app_read.client,
         attorney=app_read.attorney,
         application_current_status=app_read.application_current_status,
+        is_under_hearing=app_read.is_under_hearing,
         comments=app_read.comments,
         filing_date=app_read.filing_date,
         fer_followup_due=app_read.fer_followup_due,
@@ -948,9 +964,8 @@ def update_tm_project_detail(
         if not session.get(TmStatus, status_id):
             raise ValueError(f"invalid status_id: {status_id}")
 
-    validate_timeline_updates(
-        [(item.status_id, item.application_date) for item in detail_update.timeline_updates]
-    )
+    dated_updates = [item for item in detail_update.timeline_updates if item.application_date is not None]
+    validate_timeline_updates([(item.status_id, item.application_date) for item in dated_updates])
 
     existing_states = session.exec(
         select(TmApplicationState)
@@ -967,6 +982,11 @@ def update_tm_project_detail(
 
     for item in detail_update.timeline_updates:
         db_state = latest_by_status_id.get(item.status_id)
+        if item.application_date is None:
+            # Explicit clear - remove any existing dated milestone for this status.
+            if db_state:
+                session.delete(db_state)
+            continue
         if db_state:
             db_state.application_date = item.application_date
             db_state.modified_date = now
@@ -982,6 +1002,10 @@ def update_tm_project_detail(
 
     if detail_update.timeline_updates:
         _touch_last_status_updated(db_application, now)
+
+    if detail_update.is_under_hearing is not None:
+        db_application.is_under_hearing = detail_update.is_under_hearing
+        session.add(db_application)
 
     session.commit()
     return get_tm_project_detail(session, application_id)

@@ -225,6 +225,7 @@ class TmApplicationRead(SQLModel):
     client: Optional[PatentClientSummary] = None
     attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
+    is_under_hearing: bool = False
     comments: Optional[str] = None
     filing_date: Optional[date] = None
     fer_followup_due: Optional[date] = None
@@ -380,6 +381,7 @@ class TmProjectDetailRead(SQLModel):
     client: Optional[PatentClientSummary] = None
     attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
+    is_under_hearing: bool = False
     comments: Optional[str] = None
     filing_date: Optional[date] = None
     fer_followup_due: Optional[date] = None
@@ -393,9 +395,11 @@ class TmProjectDetailRead(SQLModel):
 
 class TmTimelineStatusUpdate(SQLModel):
     status_id: int = Field(gt=0)
-    application_date: date
+    # None clears a previously-set milestone date (deletes its tm_application_state row).
+    application_date: Optional[date] = None
 
 
 class TmProjectDetailUpdate(SQLModel):
     application: TmApplicationUpdate
     timeline_updates: list[TmTimelineStatusUpdate] = Field(default_factory=list)
+    is_under_hearing: Optional[bool] = None

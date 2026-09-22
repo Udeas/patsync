@@ -28,6 +28,7 @@ class TmApplicationData(SQLModel, table=True):
     client_docket_no: Optional[str] = Field(default=None)
     applicant_address: str = Field(sa_column=Column(Text, nullable=False))
     comments: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    is_under_hearing: bool = Field(default=False)
     created_date: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
