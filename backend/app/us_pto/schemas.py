@@ -14,6 +14,7 @@ class PipelineRunRequest(BaseModel):
 class WorkStatusUpdateRequest(BaseModel):
     updates: dict[str, str]
     completion_dates: dict[str, str] = Field(default_factory=dict)
+    comments: dict[str, str] = Field(default_factory=dict)
     run_step4_for_done: bool = True
 
 

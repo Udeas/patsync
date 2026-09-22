@@ -1162,11 +1162,20 @@ def _run_uspto_tracker_migration(conn, backend: str) -> None:
                 "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS completion_date DATE"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS comment TEXT NOT NULL DEFAULT ''"
+            )
+        )
     else:
         cols = conn.execute(text("PRAGMA table_info(uspto_tracker)")).fetchall()
         col_names = {row[1] for row in cols} if cols else set()
         if "completion_date" not in col_names:
             conn.execute(text("ALTER TABLE uspto_tracker ADD COLUMN completion_date TEXT"))
+        if "comment" not in col_names:
+            conn.execute(
+                text("ALTER TABLE uspto_tracker ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
+            )
 
 
 def _run_doc_code_rules_migration(conn, backend: str) -> None:

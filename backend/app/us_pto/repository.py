@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlmodel import Session
 
 from app.us_pto.config import (
+    WORK_STATUS_CLOSED,
     WORK_STATUS_DONE,
     WORK_STATUS_PENDING,
     WORK_STATUS_UNDER_EXTENSION,
@@ -88,6 +89,17 @@ def _is_done_status(value: str | None) -> bool:
     return _normalize_work_status(value).upper() == WORK_STATUS_DONE.upper()
 
 
+def _is_closed_status(value: str | None) -> bool:
+    return _normalize_work_status(value).upper() == WORK_STATUS_CLOSED.upper()
+
+
+def _is_finished_status(value: str | None) -> bool:
+    """Done and Closed both mean the row is wrapped up - either should pull it
+    out of active-work queues (overdue/extension flagging, due-date recompute,
+    calendar/draft automation)."""
+    return _is_done_status(value) or _is_closed_status(value)
+
+
 def _tracked_code_set() -> set[str]:
     tracked = {normalize_doc_code(c) for c in get_tracked_doc_codes()}
     tracked.update(rule.doc_code for rule in list_doc_code_rules())
@@ -139,6 +151,7 @@ def _entry_to_ui_dict(entry: UsptoTracker) -> dict:
         "event_date": entry.event_date,
         "final_due_date": _format_due_date(entry.final_due_date),
         "completion_date": _format_due_date(entry.completion_date),
+        "comment": entry.comment or "",
         "calendar_status": calendar_label,
         "template_status": template_label,
         "work_status": _normalize_work_status(entry.work_status),
@@ -246,7 +259,7 @@ def recompute_due_dates_for_doc_code(doc_code: str) -> int:
             ).all()
         )
         for entry in rows:
-            if _is_done_status(entry.work_status):
+            if _is_finished_status(entry.work_status):
                 continue
             final_due_date_str, _due_rows = compute_due_dates(entry.doc_code, entry.event_date)
             new_due = _parse_due_date(final_due_date_str)
@@ -284,7 +297,7 @@ def _apply_overdue_extension_updates(session: Session, rows: list[UsptoTracker])
     for entry in rows:
         if not entry.final_due_date or entry.final_due_date >= today:
             continue
-        if _is_done_status(entry.work_status):
+        if _is_finished_status(entry.work_status):
             continue
         if entry.work_status != WORK_STATUS_UNDER_EXTENSION:
             entry.work_status = WORK_STATUS_UNDER_EXTENSION
@@ -297,7 +310,7 @@ def _apply_overdue_extension_updates(session: Session, rows: list[UsptoTracker])
 
 
 def _is_closed_entry(entry: UsptoTracker) -> bool:
-    return _is_done_status(entry.work_status) and entry.completion_date is not None
+    return _is_finished_status(entry.work_status) and entry.completion_date is not None
 
 
 def _sync_empty_work_status_to_pending(session: Session, rows: list[UsptoTracker]) -> None:
@@ -325,7 +338,7 @@ def sync_email_not_required_for_ineligible() -> int:
         for entry in rows:
             if not _entry_is_tracked(entry):
                 continue
-            if _is_done_status(entry.work_status):
+            if _is_finished_status(entry.work_status):
                 continue
             if (entry.template_status or "").strip():
                 continue
@@ -435,19 +448,23 @@ def update_work_status(entry_id: int, work_status: str) -> None:
 def update_work_status_batch(
     updates: dict[int, str],
     completion_dates: dict[int, str] | None = None,
+    comments: dict[int, str] | None = None,
 ) -> None:
     init_db()
     completion_dates = completion_dates or {}
+    comments = comments or {}
     with Session(get_us_pto_engine()) as session:
         for entry_id, status in updates.items():
             entry = session.get(UsptoTracker, entry_id)
             if not entry:
                 continue
             entry.work_status = status
-            if _is_done_status(status):
+            if _is_finished_status(status):
                 raw_date = completion_dates.get(entry_id)
                 if raw_date:
                     entry.completion_date = _parse_due_date(raw_date)
+            if entry_id in comments:
+                entry.comment = comments[entry_id]
             entry.updated_at = _now()
             session.add(entry)
         session.commit()
@@ -465,7 +482,7 @@ def get_automation_pending() -> dict:
     for entry in rows:
         if not _entry_is_tracked(entry):
             continue
-        if _is_done_status(entry.work_status):
+        if _is_finished_status(entry.work_status):
             continue
 
         if not (entry.calendar_event_ids or "").strip():
@@ -504,7 +521,7 @@ def list_calendar_candidates(*, duplicate_mode: str = "all") -> list[dict]:
             continue
         if entry.get("calendar_event_ids"):
             continue
-        if _is_done_status(entry.get("work_status")):
+        if _is_finished_status(entry.get("work_status")):
             continue
 
         dup_key = (doc_code, normalize_cell(entry["event_date"]))
@@ -543,7 +560,7 @@ def list_draft_candidates() -> list[dict]:
             continue
         if not code_requires_email_draft(doc_code):
             continue
-        if _is_done_status(entry.get("work_status")):
+        if _is_finished_status(entry.get("work_status")):
             continue
         if entry.get("template_status"):
             continue

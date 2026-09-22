@@ -20,7 +20,7 @@ from app.us_pto.doc_codes import (
     yaml_email_template_value,
 )
 from app.us_pto.jobs import create_job, get_job, run_job_async, run_pipeline
-from app.us_pto.config import WORK_STATUS_DONE
+from app.us_pto.config import WORK_STATUS_CLOSED, WORK_STATUS_DONE
 from app.us_pto.repository import (
     get_automation_pending,
     list_entries_for_ui,
@@ -210,13 +210,19 @@ def patch_work_status(body: WorkStatusUpdateRequest):
 
     normalized = {int(key): value for key, value in body.updates.items()}
     completion_dates = {int(key): value for key, value in body.completion_dates.items()}
+    comments = {int(key): value for key, value in body.comments.items()}
     for entry_id, status in normalized.items():
-        if status == WORK_STATUS_DONE and entry_id not in completion_dates:
+        if status in (WORK_STATUS_DONE, WORK_STATUS_CLOSED) and not completion_dates.get(entry_id):
             raise HTTPException(
                 status_code=400,
-                detail=f"Completion date required for Done status (entry {entry_id}).",
+                detail=f"Completion date required for {status} status (entry {entry_id}).",
             )
-    update_work_status_batch(normalized, completion_dates=completion_dates)
+        if status == WORK_STATUS_CLOSED and not comments.get(entry_id, "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Comment required for Closed status (entry {entry_id}).",
+            )
+    update_work_status_batch(normalized, completion_dates=completion_dates, comments=comments)
     step4_result = None
     if body.run_step4_for_done:
         done_ids = [eid for eid, status in normalized.items() if status == WORK_STATUS_DONE]

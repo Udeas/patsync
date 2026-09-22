@@ -18,6 +18,7 @@ class UsptoTracker(SQLModel, table=True):
     final_due_date: Optional[date] = None
     work_status: str = Field(default="Pending", max_length=32)
     completion_date: Optional[date] = None
+    comment: str = Field(default="")
     calendar_event_ids: str = Field(default="")
     template_status: str = Field(default="", max_length=64)
     is_closure_done: bool = Field(default=False)
