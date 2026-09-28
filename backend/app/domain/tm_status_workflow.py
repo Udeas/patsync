@@ -16,22 +16,14 @@ from typing import Mapping, Sequence
 from app.tm_status_catalog import (
     ALL_STATUS_IDS,
     DATED_STATUS_IDS_EDITABLE,
+    RESPONSE_REQUIRES_ISSUED_STATUS_ID,
     STATUS_ID_TM_APPLICATION_FILED,
+    TM_STATUS_SEED,
 )
 
 OPTIONAL_STATUS_IDS = frozenset(ALL_STATUS_IDS - {STATUS_ID_TM_APPLICATION_FILED})
 
-_STATUS_LABELS = {
-    1: "Application filed",
-    2: "Formality check Fail",
-    3: "Formality check pass",
-    4: "FER Issued",
-    5: "FER Response Submitted",
-    6: "Hearing Issued",
-    7: "Accepted & Advertised",
-    8: "Registered",
-    9: "Notice U/s 132 Issued",
-}
+_STATUS_LABELS = dict(TM_STATUS_SEED)
 
 
 def is_optional_status(status_id: int) -> bool:
@@ -42,10 +34,12 @@ def enabled_status_ids(filled: Mapping[int, date]) -> set[int]:
     """Status ids that may receive or keep a date given current milestones.
 
     Application filed unlocks everything else at once - none of the other
-    dated milestones gate each other, they're independent optional branches.
-    Ids already filled stay enabled even if they fall outside the currently
-    "editable" set (legacy Formality check pass / FER Response Submitted
-    dates already on a project keep showing/being editable).
+    dated milestones gate each other, they're independent optional branches,
+    except a "Response Filed" milestone only makes sense (and is only
+    offered) once its "Issued" counterpart already has a date. Ids already
+    filled stay enabled even if they'd otherwise fall outside the editable
+    set (legacy Formality check pass dates already on a project keep
+    showing/being editable).
     """
     enabled: set[int] = set(filled.keys())
 
@@ -53,7 +47,11 @@ def enabled_status_ids(filled: Mapping[int, date]) -> set[int]:
         enabled.add(STATUS_ID_TM_APPLICATION_FILED)
         return enabled
 
-    enabled |= DATED_STATUS_IDS_EDITABLE
+    for status_id in DATED_STATUS_IDS_EDITABLE:
+        prerequisite = RESPONSE_REQUIRES_ISSUED_STATUS_ID.get(status_id)
+        if prerequisite is not None and prerequisite not in filled:
+            continue
+        enabled.add(status_id)
     return enabled
 
 
@@ -71,6 +69,12 @@ def validate_filled_timeline(filled: Mapping[int, date]) -> None:
 
     if STATUS_ID_TM_APPLICATION_FILED not in filled:
         raise ValueError("Application filed must be set before other statuses.")
+
+    for response_id, issued_id in RESPONSE_REQUIRES_ISSUED_STATUS_ID.items():
+        if response_id in filled and issued_id not in filled:
+            raise ValueError(
+                f"{_status_label(issued_id)} is required before {_status_label(response_id)}."
+            )
 
 
 def validate_timeline_updates(updates: Sequence[tuple[int, date]]) -> None:

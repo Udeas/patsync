@@ -12,7 +12,7 @@ from app.domain.tm_status_workflow import (
     enabled_status_ids,
     is_optional_status,
     validate_status_change,
-    validate_timeline_updates,
+    validate_filled_timeline,
 )
 from app.domain.tm_sub_status import compute_display_status, is_valid_sub_status, main_status_phase_for
 from app.domain.custom_events import REMINDER_OPTION_NONE, compute_reminder_date, format_short_date
@@ -977,9 +977,6 @@ def update_tm_project_detail(
         if not session.get(TmStatus, status_id):
             raise ValueError(f"invalid status_id: {status_id}")
 
-    dated_updates = [item for item in detail_update.timeline_updates if item.application_date is not None]
-    validate_timeline_updates([(item.status_id, item.application_date) for item in dated_updates])
-
     if not is_valid_sub_status(detail_update.sub_status):
         raise ValueError(f"invalid sub_status: {detail_update.sub_status}")
 
@@ -995,6 +992,20 @@ def update_tm_project_detail(
             session.delete(state)
             continue
         latest_by_status_id[state.status_id] = state
+
+    # Validate against the state as it will be *after* this update lands
+    # (existing dated milestones, overlaid with this request's changes) -
+    # a partial single-item save must see prerequisites set in an earlier
+    # save, not just what's in this payload.
+    merged_filled: dict[int, date] = {
+        sid: st.application_date for sid, st in latest_by_status_id.items()
+    }
+    for item in detail_update.timeline_updates:
+        if item.application_date is None:
+            merged_filled.pop(item.status_id, None)
+        else:
+            merged_filled[item.status_id] = item.application_date
+    validate_filled_timeline(merged_filled)
 
     for item in detail_update.timeline_updates:
         db_state = latest_by_status_id.get(item.status_id)
