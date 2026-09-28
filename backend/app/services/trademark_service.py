@@ -14,6 +14,7 @@ from app.domain.tm_status_workflow import (
     validate_status_change,
     validate_timeline_updates,
 )
+from app.domain.tm_sub_status import compute_display_status, is_valid_sub_status, main_status_phase_for
 from app.domain.custom_events import REMINDER_OPTION_NONE, compute_reminder_date, format_short_date
 from app.domain.tm_timeline import build_timeline_for_tm_application
 from app.patents.models import PatentAgent, PatentClient
@@ -43,7 +44,12 @@ from app.schemas.trademark import (
     TmReminderRead,
     TmStatusRead,
 )
-from app.tm_status_catalog import STATUS_ID_TM_APPLICATION_FILED, STATUS_TM_HEARING
+from app.tm_status_catalog import (
+    DATED_STATUS_DISPLAY_RANK,
+    DEPRECATED_DATED_STATUS_IDS,
+    STATUS_ID_TM_APPLICATION_FILED,
+    SUB_STATUS_CHOICES,
+)
 from app.audit.service import record_status_change
 
 
@@ -271,15 +277,13 @@ def _custom_event_reminders_bulk(
 
 
 def _display_current_status(
-    is_under_hearing: bool, status_name: str, states_ordered: List[Tuple[int, date, str]]
+    sub_status: Optional[str], states_ordered: List[Tuple[int, date, str]]
 ) -> str:
-    """Manual 'Under Hearing' flag only overrides the displayed status while
-    the real Hearing Issued milestone hasn't been dated yet - once that date
-    is entered the normal timeline-derived status takes over as usual."""
-    hearing_filled = any(name == STATUS_TM_HEARING for _, _, name in states_ordered)
-    if is_under_hearing and not hearing_filled:
-        return "Under Hearing"
-    return status_name
+    """The single "current status" shown to the user - whichever of the
+    dated milestones or the informative sub-status ranks most advanced in
+    real-world order. See app.domain.tm_sub_status for the ranking."""
+    dated_names = [name for _, _, name in states_ordered]
+    return compute_display_status(sub_status, dated_names)
 
 
 def _read_model_with_timeline(
@@ -293,9 +297,10 @@ def _read_model_with_timeline(
     agents_by_id: dict[int, dict] | None = None,
     custom_event_reminders_by_app_id: dict[int, List[TmReminderRead]] | None = None,
 ) -> TmApplicationRead:
+    display_status = _display_current_status(data.sub_status, states_ordered)
     tl = build_timeline_for_tm_application(
         states_ordered=states_ordered,
-        current_status_name=status.status,
+        current_status_name=display_status,
         today=today,
     )
     reminders = [
@@ -333,14 +338,15 @@ def _read_model_with_timeline(
         client_docket_no=data.client_docket_no,
         client=client_summary,
         attorney=attorney_summary,
-        application_current_status=_display_current_status(
-            data.is_under_hearing, status.status, states_ordered
-        ),
-        is_under_hearing=data.is_under_hearing,
+        application_current_status=display_status,
+        main_status_phase=main_status_phase_for(display_status),
+        sub_status=data.sub_status,
         comments=data.comments,
         filing_date=tl.filing_date,
         fer_followup_due=tl.fer_followup_due,
+        notice_132_followup_due=tl.notice_132_followup_due,
         hearing_due=tl.hearing_due,
+        hearing_response_due=tl.hearing_response_due,
         renewal_due=tl.renewal_due,
         upcoming_reminders=reminders,
         last_status_updated_at=data.last_status_updated_at,
@@ -507,7 +513,7 @@ def get_tm_application_timeline(session: Session, application_id: int) -> Option
     if not db_application:
         return None
     states = _states_ordered_for_app(session, db_application.application_num)
-    current_status = states[-1][2] if states else ""
+    current_status = _display_current_status(db_application.sub_status, states)
 
     today = date.today()
     tl = build_timeline_for_tm_application(
@@ -897,7 +903,8 @@ def get_tm_project_detail(session: Session, application_id: int) -> Optional[TmP
 
     filled = {sid: st.application_date for sid, st in by_status_id.items()}
     enabled = enabled_status_ids(filled)
-    statuses = session.exec(select(TmStatus).order_by(TmStatus.id)).all()
+    statuses = session.exec(select(TmStatus)).all()
+    statuses = sorted(statuses, key=lambda s: DATED_STATUS_DISPLAY_RANK.get(s.status, s.id or 0))
     timeline = [
         TmProjectTimelineItem(
             status_id=status.id or 0,
@@ -905,10 +912,12 @@ def get_tm_project_detail(session: Session, application_id: int) -> Optional[TmP
             application_date=by_status_id.get(status.id or 0).application_date
             if by_status_id.get(status.id or 0)
             else None,
+            note=by_status_id.get(status.id or 0).note if by_status_id.get(status.id or 0) else None,
             is_optional=is_optional_status(status.id or 0),
             is_enabled=(status.id or 0) in enabled,
         )
         for status in statuses
+        if (status.id or 0) not in DEPRECATED_DATED_STATUS_IDS or (status.id or 0) in by_status_id
     ]
 
     return TmProjectDetailRead(
@@ -933,16 +942,20 @@ def get_tm_project_detail(session: Session, application_id: int) -> Optional[TmP
         client=app_read.client,
         attorney=app_read.attorney,
         application_current_status=app_read.application_current_status,
-        is_under_hearing=app_read.is_under_hearing,
+        main_status_phase=app_read.main_status_phase,
+        sub_status=app_read.sub_status,
         comments=app_read.comments,
         filing_date=app_read.filing_date,
         fer_followup_due=app_read.fer_followup_due,
+        notice_132_followup_due=app_read.notice_132_followup_due,
         hearing_due=app_read.hearing_due,
+        hearing_response_due=app_read.hearing_response_due,
         renewal_due=app_read.renewal_due,
         upcoming_reminders=app_read.upcoming_reminders,
         notes=_project_notes_read(session, application_id),
         custom_events=_tm_custom_events_read(session, application_id),
         timeline=timeline,
+        sub_status_choices=SUB_STATUS_CHOICES,
     )
 
 
@@ -967,6 +980,9 @@ def update_tm_project_detail(
     dated_updates = [item for item in detail_update.timeline_updates if item.application_date is not None]
     validate_timeline_updates([(item.status_id, item.application_date) for item in dated_updates])
 
+    if not is_valid_sub_status(detail_update.sub_status):
+        raise ValueError(f"invalid sub_status: {detail_update.sub_status}")
+
     existing_states = session.exec(
         select(TmApplicationState)
         .where(TmApplicationState.application_num == db_application.application_num)
@@ -989,12 +1005,14 @@ def update_tm_project_detail(
             continue
         if db_state:
             db_state.application_date = item.application_date
+            db_state.note = item.note
             db_state.modified_date = now
         else:
             db_state = TmApplicationState(
                 application_num=db_application.application_num,
                 status_id=item.status_id,
                 application_date=item.application_date,
+                note=item.note,
                 created_date=now,
                 modified_date=now,
             )
@@ -1003,9 +1021,8 @@ def update_tm_project_detail(
     if detail_update.timeline_updates:
         _touch_last_status_updated(db_application, now)
 
-    if detail_update.is_under_hearing is not None:
-        db_application.is_under_hearing = detail_update.is_under_hearing
-        session.add(db_application)
+    db_application.sub_status = detail_update.sub_status
+    session.add(db_application)
 
     session.commit()
     return get_tm_project_detail(session, application_id)
