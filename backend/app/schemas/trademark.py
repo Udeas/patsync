@@ -229,10 +229,12 @@ class TmApplicationRead(SQLModel):
     sub_status: Optional[str] = None
     comments: Optional[str] = None
     filing_date: Optional[date] = None
+    formality_fail_followup_due: Optional[date] = None
     fer_followup_due: Optional[date] = None
     notice_132_followup_due: Optional[date] = None
     hearing_due: Optional[date] = None
     hearing_response_due: Optional[date] = None
+    registration_certificate_due: Optional[date] = None
     renewal_due: Optional[date] = None
     upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
     last_status_updated_at: Optional[datetime] = None
@@ -389,10 +391,12 @@ class TmProjectDetailRead(SQLModel):
     sub_status: Optional[str] = None
     comments: Optional[str] = None
     filing_date: Optional[date] = None
+    formality_fail_followup_due: Optional[date] = None
     fer_followup_due: Optional[date] = None
     notice_132_followup_due: Optional[date] = None
     hearing_due: Optional[date] = None
     hearing_response_due: Optional[date] = None
+    registration_certificate_due: Optional[date] = None
     renewal_due: Optional[date] = None
     upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
     notes: List[TmProjectNoteRead] = Field(default_factory=list)
