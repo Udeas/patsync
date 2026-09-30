@@ -48,6 +48,7 @@ from app.tm_status_catalog import (
     DATED_STATUS_DISPLAY_RANK,
     DEPRECATED_DATED_STATUS_IDS,
     STATUS_ID_TM_APPLICATION_FILED,
+    STATUS_TM_REGISTERED,
     SUB_STATUS_CHOICES,
 )
 from app.audit.service import record_status_change
@@ -181,6 +182,28 @@ def _states_grouped(
     return dict(grouped)
 
 
+def _registered_notes_bulk(session: Session, application_nums: List[str]) -> dict[str, str]:
+    """Latest 'Registered' dated milestone's note (Journal No.) per app -
+    the "Registration Certificate Due" reminder only clears once this is
+    non-empty alongside the Registered date (see tm_timeline.py)."""
+    nums = [n for n in application_nums if n]
+    if not nums:
+        return {}
+    rows = session.exec(
+        select(TmApplicationState.application_num, TmApplicationState.note, TmApplicationState.id)
+        .join(TmStatus, TmStatus.id == TmApplicationState.status_id)
+        .where(
+            TmApplicationState.application_num.in_(nums),
+            TmStatus.status == STATUS_TM_REGISTERED,
+        )
+        .order_by(TmApplicationState.application_num, TmApplicationState.id)
+    ).all()
+    latest: dict[str, str] = {}
+    for application_num, note, _id in rows:
+        latest[application_num] = note or ""
+    return latest
+
+
 def _client_summary(client: PatentClient) -> dict:
     return {"id": client.id, "client_code": client.client_code, "name": client.name}
 
@@ -296,12 +319,14 @@ def _read_model_with_timeline(
     clients_by_id: dict[int, dict] | None = None,
     agents_by_id: dict[int, dict] | None = None,
     custom_event_reminders_by_app_id: dict[int, List[TmReminderRead]] | None = None,
+    registered_note: Optional[str] = None,
 ) -> TmApplicationRead:
     display_status = _display_current_status(data.sub_status, states_ordered)
     tl = build_timeline_for_tm_application(
         states_ordered=states_ordered,
         current_status_name=display_status,
         today=today,
+        registered_note=registered_note,
     )
     reminders = [
         TmReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
@@ -459,6 +484,7 @@ def get_tm_applications(session: Session) -> List[TmApplicationRead]:
     today = date.today()
     nums = [data.application_num for data, _state, _status in rows]
     grouped = _states_grouped(session, nums)
+    registered_notes = _registered_notes_bulk(session, nums)
     clients_by_id, agents_by_id = _load_contacts_bulk(
         session, [data for data, _state, _status in rows]
     )
@@ -476,6 +502,7 @@ def get_tm_applications(session: Session) -> List[TmApplicationRead]:
             clients_by_id,
             agents_by_id,
             custom_reminders_by_app_id,
+            registered_notes.get(data.application_num),
         )
         for data, state, status in rows
     ]
@@ -507,7 +534,10 @@ def get_tm_application_by_id(session: Session, application_id: int) -> Optional[
     data, state, status = row
     today = date.today()
     states = _states_ordered_for_app(session, data.application_num)
-    return _read_model_with_timeline(session, data, state, status, states, today)
+    registered_note = _registered_notes_bulk(session, [data.application_num]).get(data.application_num)
+    return _read_model_with_timeline(
+        session, data, state, status, states, today, registered_note=registered_note
+    )
 
 
 def get_tm_application_timeline(session: Session, application_id: int) -> Optional[TmApplicationTimelineRead]:
@@ -518,10 +548,14 @@ def get_tm_application_timeline(session: Session, application_id: int) -> Option
     current_status = _display_current_status(db_application.sub_status, states)
 
     today = date.today()
+    registered_note = _registered_notes_bulk(session, [db_application.application_num]).get(
+        db_application.application_num
+    )
     tl = build_timeline_for_tm_application(
         states_ordered=states,
         current_status_name=current_status,
         today=today,
+        registered_note=registered_note,
     )
 
     reminders = [
