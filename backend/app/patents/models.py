@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import Column, DateTime, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -23,9 +23,21 @@ class PatentProject(SQLModel, table=True):
     attorney_id: Optional[int] = Field(default=None, foreign_key="patent_agent.id")
     client_id: Optional[int] = Field(default=None, foreign_key="patent_client.id")
     client_docket_no: Optional[str] = Field(default=None)
+    abandon_reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     application_type: Optional[str] = Field(default=None)
     provisional_kind: Optional[str] = Field(default=None, max_length=3)
+    parent_project_id: Optional[int] = Field(default=None, foreign_key="patent_project.id")
+    parent_application_no: Optional[str] = Field(default=None)
+    parent_application_date: Optional[date] = Field(default=None)
+    grant_number: Optional[str] = Field(default=None)
+    annuity_paid_upto: Optional[date] = Field(default=None)
+    next_annuity_due: Optional[date] = Field(default=None)
+    annuity_transferred_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    annuity_transferred_comment: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     pct_wipo_filed_only: bool = Field(default=False)
+    proof_of_right_furnished: bool = Field(default=False)
     is_archived: bool = Field(default=False, nullable=False, index=True)
     created_date: datetime = Field(
         default_factory=datetime.utcnow,
@@ -86,6 +98,82 @@ class PatentStatusEvent(SQLModel, table=True):
     status_date: date = Field(nullable=False)
 
 
+class PatentAnnuityPayment(SQLModel, table=True):
+    __tablename__ = "patent_annuity_payment"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    payment_date: date = Field(nullable=False)
+    total_fee: int = Field(nullable=False)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PatentAnnuityPaymentYear(SQLModel, table=True):
+    __tablename__ = "patent_annuity_payment_year"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    payment_id: int = Field(nullable=False, foreign_key="patent_annuity_payment.id", index=True)
+    renewal_year: int = Field(nullable=False)
+
+
+class PatentProjectNote(SQLModel, table=True):
+    __tablename__ = "patent_project_note"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    note_text: str = Field(sa_column=Column(Text, nullable=False))
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PatentCustomEvent(SQLModel, table=True):
+    __tablename__ = "patent_custom_event"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    event_type: str = Field(nullable=False)
+    event_date: date = Field(nullable=False)
+    reminder_option: str = Field(nullable=False)
+    reminder_date: Optional[date] = Field(default=None)
+    closure_date: Optional[date] = Field(default=None)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PatentDocketEntry(SQLModel, table=True):
+    """Auto-docketed Indian filing-formality deadlines (Rule 10 assignment,
+    Rule 135(1) POA, Rule 12(1A)/12(2) Form 3, and the internal priority-
+    document target). See app/patents/docket.py for the generation rules.
+    Unique on (project_id, item_type) so re-running generation is a no-op."""
+
+    __tablename__ = "patent_docket_entry"
+    __table_args__ = (
+        UniqueConstraint("project_id", "item_type", name="uq_patent_docket_entry_project_item"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(nullable=False, foreign_key="patent_project.id", index=True)
+    item_type: str = Field(nullable=False)
+    title: str = Field(nullable=False)
+    rule_reference: str = Field(nullable=False)
+    due_date: date = Field(nullable=False)
+    is_internal_target: bool = Field(default=False)
+    is_system_generated: bool = Field(default=True)
+    auto_satisfied: bool = Field(default=False)
+    closure_date: Optional[date] = Field(default=None)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
 class PatentClient(SQLModel, table=True):
     __tablename__ = "patent_client"
 
@@ -96,6 +184,7 @@ class PatentClient(SQLModel, table=True):
     email: Optional[str] = Field(default=None)
     key_contacts: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     docketing_email: Optional[str] = Field(default=None)
+    client_types: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
 
 class PatentAgent(SQLModel, table=True):

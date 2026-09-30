@@ -4,6 +4,7 @@ from datetime import datetime
 
 from dateutil.relativedelta import relativedelta
 
+from app.us_pto.doc_code_rules import get_doc_code_rule
 from app.us_pto.doc_codes import get_rules_for_doc_code
 
 
@@ -17,6 +18,25 @@ def parse_event_date(value: str) -> datetime:
 
 
 def compute_due_dates(doc_code: str, event_date_str: str) -> tuple[str | None, list[dict]]:
+    db_rule = get_doc_code_rule(doc_code)
+    if db_rule:
+        event_date = parse_event_date(event_date_str)
+        final_due = event_date + relativedelta(months=db_rule.final_due_months)
+        extension_due = final_due + relativedelta(months=db_rule.final_due_extension_months)
+        due_date_rows = [
+            {
+                "label": "Final Due",
+                "due_date": final_due.strftime("%Y-%m-%d"),
+                "month_offset": db_rule.final_due_months,
+            },
+            {
+                "label": "Extension Due",
+                "due_date": extension_due.strftime("%Y-%m-%d"),
+                "month_offset": db_rule.final_due_months + db_rule.final_due_extension_months,
+            },
+        ]
+        return final_due.strftime("%Y-%m-%d"), due_date_rows
+
     rules = get_rules_for_doc_code(doc_code)
     if not rules:
         return None, []

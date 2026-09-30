@@ -113,6 +113,13 @@ def _add_months(value: date, months: int) -> date:
     return date(year, month, day)
 
 
+# Patents (Amendment) Rules, 2024 — Form 18 filing window shortened from 48
+# to 31 months for applications filed on or after this date.
+RFE_RULE_CHANGE_DATE = date(2024, 3, 15)
+RFE_MONTHS_NEW = 31
+RFE_MONTHS_OLD = 48
+
+
 def compute_rfe_deadline(
     in_application_date: date,
     priority_dates: Sequence[date] = (),
@@ -120,7 +127,42 @@ def compute_rfe_deadline(
     anchor = in_application_date
     if priority_dates:
         anchor = min(in_application_date, min(priority_dates))
-    return _add_months(anchor, 31)
+    months = RFE_MONTHS_NEW if in_application_date >= RFE_RULE_CHANGE_DATE else RFE_MONTHS_OLD
+    return _add_months(anchor, months)
+
+
+def compute_divisional_rfe_deadline(
+    divisional_in_application_date: date,
+    parent_application_date: date,
+    parent_priority_dates: Sequence[date] = (),
+) -> date:
+    """RFE deadline for a divisional application (Rule 24B, Rule 13(2A)).
+
+    Later of: 31/48 months (per the usual rule-change cutoff) from the
+    filing/priority date of the first-mentioned (parent) application, OR
+    6 months from the divisional's own filing date.
+    """
+    parent_deadline = compute_rfe_deadline(parent_application_date, parent_priority_dates)
+    own_deadline = _add_months(divisional_in_application_date, 6)
+    return max(parent_deadline, own_deadline)
+
+
+def compute_patent_of_addition_rfe_deadline(
+    own_in_application_date: date,
+    own_priority_dates: Sequence[date],
+    parent_application_date: date | None,
+    parent_priority_dates: Sequence[date] = (),
+) -> date:
+    """RFE deadline for a Patent of Addition application.
+
+    31/48 months (per the usual rule-change cutoff) from the parent
+    application's filing/priority date when a parent is on file; otherwise
+    the plain formula anchored on the Patent of Addition's own filing/
+    priority date. No 6-month-from-own-filing floor (unlike Divisional).
+    """
+    if parent_application_date:
+        return compute_rfe_deadline(parent_application_date, parent_priority_dates)
+    return compute_rfe_deadline(own_in_application_date, own_priority_dates)
 
 
 def _validate_request_for_examination(
@@ -131,6 +173,12 @@ def _validate_request_for_examination(
 
     priority_dates: Sequence[date],
 
+    *,
+    is_divisional: bool = False,
+    is_patent_of_addition: bool = False,
+    parent_application_date: date | None = None,
+    parent_priority_dates: Sequence[date] = (),
+
 ) -> None:
 
     if rfe_date < in_application_date:
@@ -139,16 +187,38 @@ def _validate_request_for_examination(
 
 
 
+    if is_divisional and parent_application_date:
+        deadline = compute_divisional_rfe_deadline(
+            in_application_date, parent_application_date, parent_priority_dates
+        )
+        if rfe_date > deadline:
+            raise ValueError(
+                "Request for Examination date must be within 31/48 months (per rule-change date) of "
+                "the parent application's filing/priority date, or 6 months of the divisional's own "
+                "filing date, whichever is later"
+            )
+        return
+
+    if is_patent_of_addition:
+        deadline = compute_patent_of_addition_rfe_deadline(
+            in_application_date, priority_dates, parent_application_date, parent_priority_dates
+        )
+        if rfe_date > deadline:
+            raise ValueError(
+                "Request for Examination date must be within 31/48 months (per rule-change date) of "
+                "the parent application's filing/priority date, or of the Patent of Addition's own "
+                "filing/priority date if no parent application is on file"
+            )
+        return
+
     deadline = compute_rfe_deadline(in_application_date, priority_dates)
 
     if rfe_date > deadline:
 
+        months = RFE_MONTHS_NEW if in_application_date >= RFE_RULE_CHANGE_DATE else RFE_MONTHS_OLD
         raise ValueError(
-
-            "Request for Examination date must be within 31 months of the earlier of "
-
+            f"Request for Examination date must be within {months} months of the earlier of "
             "convention filing date or IN application filing date"
-
         )
 
 
@@ -273,6 +343,12 @@ def validate_timeline_updates(
 
     priority_dates: Sequence[date] | None = None,
 
+    *,
+    is_divisional: bool = False,
+    is_patent_of_addition: bool = False,
+    parent_application_date: date | None = None,
+    parent_priority_dates: Sequence[date] = (),
+
 ) -> None:
 
     filled: dict[int, date] = {}
@@ -362,6 +438,11 @@ def validate_timeline_updates(
             filing_date,
 
             priority_dates or (),
+
+            is_divisional=is_divisional,
+            is_patent_of_addition=is_patent_of_addition,
+            parent_application_date=parent_application_date,
+            parent_priority_dates=parent_priority_dates,
 
         )
 

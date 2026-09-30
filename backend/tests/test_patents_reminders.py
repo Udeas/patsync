@@ -11,7 +11,11 @@ from app.patents.patent_status_catalog import (
     STATUS_ID_REQUEST_FOR_EXAMINATION,
 )
 from app.patents.reminders import compute_next_patent_action
-from app.patents.workflow import compute_rfe_deadline
+from app.patents.workflow import (
+    compute_divisional_rfe_deadline,
+    compute_patent_of_addition_rfe_deadline,
+    compute_rfe_deadline,
+)
 
 
 def test_rfe_due_when_filed_without_rfe():
@@ -113,7 +117,10 @@ def test_fer_response_current_without_hearing_has_no_due():
     assert action is None
 
 
-def test_granted_current_has_no_due():
+def test_granted_current_shows_next_annuity_action():
+    # Granted used to be a dead end (no next action). It now surfaces the
+    # next renewal ("annuity") fee action - see test_patent_annuity.py for
+    # the full calculation engine coverage.
     action = compute_next_patent_action(
         filled={
             STATUS_ID_APPLICATION_FILED: date(2026, 1, 1),
@@ -121,6 +128,17 @@ def test_granted_current_has_no_due():
         },
         current_status_id=STATUS_ID_GRANTED,
         in_application_date=date(2026, 1, 1),
+    )
+    assert action is not None
+    assert action.message == "Renewal Fee Due — 3rd Year"
+    assert action.due_date == date(2028, 1, 1)
+
+
+def test_granted_with_no_filing_date_has_no_due():
+    action = compute_next_patent_action(
+        filled={STATUS_ID_GRANTED: date(2026, 5, 1)},
+        current_status_id=STATUS_ID_GRANTED,
+        in_application_date=None,
     )
     assert action is None
 
@@ -152,9 +170,12 @@ def test_provisional_due_shows_non_provisional_in_12_months():
     assert action.due_date == date(2027, 1, 15)
 
 
-def test_provisional_after_non_provisional_uses_existing_rfe_flow():
-    in_date = date(2026, 1, 15)
-    non_provisional_date = date(2026, 12, 1)
+def test_provisional_after_non_provisional_anchors_rfe_on_provisional_date_not_conversion_date():
+    # The provisional's own filing date acts as its priority date for RFE
+    # purposes - the Non-Provisional/complete-specification date is a
+    # separate 12-month deadline and must not replace the RFE anchor.
+    in_date = date(2022, 9, 21)
+    non_provisional_date = date(2023, 9, 20)
     action = compute_next_patent_action(
         filled={
             STATUS_ID_APPLICATION_FILED: in_date,
@@ -166,5 +187,84 @@ def test_provisional_after_non_provisional_uses_existing_rfe_flow():
     )
     assert action is not None
     assert action.message == "Request for Examination"
-    assert action.due_date == compute_rfe_deadline(non_provisional_date)
+    assert action.due_date == compute_rfe_deadline(in_date)
+    assert action.due_date != compute_rfe_deadline(non_provisional_date)
+
+
+def test_divisional_rfe_uses_divisional_formula_when_parent_date_present():
+    divisional_filing = date(2026, 1, 1)
+    parent_date = date(2024, 6, 1)
+    action = compute_next_patent_action(
+        filled={STATUS_ID_APPLICATION_FILED: divisional_filing},
+        current_status_id=STATUS_ID_APPLICATION_FILED,
+        in_application_date=divisional_filing,
+        application_type="Ordinary Divisional",
+        parent_application_date=parent_date,
+    )
+    assert action is not None
+    assert action.message == "Request for Examination"
+    assert action.due_date == compute_divisional_rfe_deadline(divisional_filing, parent_date)
+    # sanity: divisional formula must differ from the plain (non-divisional)
+    # formula that only looks at the divisional's own filing date.
+    assert action.due_date != compute_rfe_deadline(divisional_filing)
+
+
+def test_divisional_rfe_falls_back_to_plain_formula_without_parent_date():
+    # Legacy divisional docket created before parent data was tracked.
+    in_date = date(2026, 1, 1)
+    action = compute_next_patent_action(
+        filled={STATUS_ID_APPLICATION_FILED: in_date},
+        current_status_id=STATUS_ID_APPLICATION_FILED,
+        in_application_date=in_date,
+        application_type="Ordinary Divisional",
+        parent_application_date=None,
+    )
+    assert action is not None
+    assert action.due_date == compute_rfe_deadline(in_date)
+
+
+def test_non_divisional_type_ignores_parent_application_date():
+    in_date = date(2026, 1, 1)
+    parent_date = date(2024, 6, 1)
+    action = compute_next_patent_action(
+        filled={STATUS_ID_APPLICATION_FILED: in_date},
+        current_status_id=STATUS_ID_APPLICATION_FILED,
+        in_application_date=in_date,
+        application_type="Convention",
+        parent_application_date=parent_date,
+    )
+    assert action is not None
+    assert action.due_date == compute_rfe_deadline(in_date)
+
+
+def test_patent_of_addition_rfe_uses_parent_formula_when_parent_date_present():
+    own_filing = date(2026, 1, 1)
+    parent_date = date(2018, 1, 1)  # pre-amendment -> 48 months, well before own filing
+    action = compute_next_patent_action(
+        filled={STATUS_ID_APPLICATION_FILED: own_filing},
+        current_status_id=STATUS_ID_APPLICATION_FILED,
+        in_application_date=own_filing,
+        application_type="Ordinary-Patnet of Addition",
+        parent_application_date=parent_date,
+    )
+    assert action is not None
+    assert action.message == "Request for Examination"
+    assert action.due_date == compute_patent_of_addition_rfe_deadline(own_filing, (), parent_date)
+    # sanity: parent's (lapsed) deadline governs - no 6-month floor rescue
+    # like Divisional has.
+    assert action.due_date == compute_rfe_deadline(parent_date)
+    assert action.due_date != compute_rfe_deadline(own_filing)
+
+
+def test_patent_of_addition_rfe_falls_back_to_own_formula_without_parent_date():
+    in_date = date(2026, 1, 1)
+    action = compute_next_patent_action(
+        filled={STATUS_ID_APPLICATION_FILED: in_date},
+        current_status_id=STATUS_ID_APPLICATION_FILED,
+        in_application_date=in_date,
+        application_type="Convention - Patent of Addition",
+        parent_application_date=None,
+    )
+    assert action is not None
+    assert action.due_date == compute_rfe_deadline(in_date)
 

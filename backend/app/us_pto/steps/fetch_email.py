@@ -208,47 +208,79 @@ def parsed_rows_for_api(rows: list[dict]) -> list[dict]:
     return api_rows
 
 
-def fetch_emails(job=None) -> list[dict]:
+def _select_mailbox(imap: imaplib.IMAP4_SSL) -> bool:
+    status, _ = imap.select(IMAP_MAILBOX, readonly=False)
+    if status == "OK":
+        return True
+    _, mailboxes = imap.list()
+    found = None
+    for mailbox in mailboxes or []:
+        mailbox_str = mailbox.decode() if isinstance(mailbox, bytes) else str(mailbox)
+        if IMAP_MAILBOX in mailbox_str:
+            matches = re.findall(r'"(.+)"$', mailbox_str)
+            if matches:
+                found = matches[0]
+                break
+    if found:
+        imap.select(found, readonly=False)
+        return True
+    print(f"Mailbox '{IMAP_MAILBOX}' not found.")
+    return False
+
+
+def fetch_emails(job=None) -> tuple[list[dict], int]:
+    return _fetch_emails_matching("UNSEEN", "unseen message(s)", job=job)
+
+
+def fetch_emails_since(since_date, job=None) -> tuple[list[dict], int]:
+    """Rebuild-from-scratch scan: every message in the mailbox received on or
+    after since_date (a date/datetime), regardless of its \\Seen flag. Unlike
+    fetch_emails() (which only ever looks at UNSEEN mail for incremental
+    day-to-day polling), this is meant for re-importing a date range after
+    the docket table has been cleared, since by then everything in the
+    mailbox is already marked \\Seen from prior runs."""
+    criteria = f'(SINCE "{since_date.strftime("%d-%b-%Y")}")'
+    return _fetch_emails_matching(
+        criteria, f"message(s) since {since_date.isoformat()}", job=job
+    )
+
+
+def _fetch_emails_matching(search_criteria: str, description: str, job=None) -> tuple[list[dict], int]:
     if not IMAP_USERNAME or not IMAP_PASSWORD:
         raise RuntimeError(
             "Email credentials not configured. Set US_PTO_IMAP_USERNAME and US_PTO_IMAP_PASSWORD."
         )
 
-    imap = imaplib.IMAP4_SSL(IMAP_HOST)
+    # Without a timeout the underlying socket blocks forever on any stalled
+    # server response (e.g. logout()) - bounding it turns a silent hang into
+    # a catchable socket.timeout.
+    imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=30)
     imap.login(IMAP_USERNAME, IMAP_PASSWORD)
 
-    status, _ = imap.select(IMAP_MAILBOX, readonly=False)
-    if status != "OK":
-        _, mailboxes = imap.list()
-        found = None
-        for mailbox in mailboxes or []:
-            mailbox_str = mailbox.decode() if isinstance(mailbox, bytes) else str(mailbox)
-            if IMAP_MAILBOX in mailbox_str:
-                matches = re.findall(r'"(.+)"$', mailbox_str)
-                if matches:
-                    found = matches[0]
-                    break
-        if found:
-            imap.select(found, readonly=False)
-        else:
-            print(f"Mailbox '{IMAP_MAILBOX}' not found.")
-            imap.logout()
-            return []
+    if not _select_mailbox(imap):
+        imap.logout()
+        return [], 0
 
-    _, message_ids = imap.search(None, "UNSEEN")
+    _, message_ids = imap.search(None, search_criteria)
     ids = message_ids[0].split()
     if not ids:
-        print("No unseen messages.")
+        print(f"No {description} found.")
         imap.logout()
-        return []
+        return [], 0
 
     total = len(ids)
-    print(f"Found {total} unseen message(s).")
+    print(f"Found {total} {description}.")
     all_rows = []
+    unparsed_count = 0
+    seen_mark_failures = 0
 
     for index, num in enumerate(ids, start=1):
         mid = num.decode() if isinstance(num, bytes) else str(num)
-        _, raw = imap.fetch(mid, "(RFC822)")
+        # BODY.PEEK[] (unlike plain RFC822) never implicitly sets \Seen as a
+        # side effect of fetching - marking-as-seen below is the only place
+        # that happens, so we can gate it on parse success.
+        _, raw = imap.fetch(mid, "(BODY.PEEK[])")
+        parsed_ok = False
         for part in raw:
             if isinstance(part, tuple):
                 msg = email.message_from_bytes(part[1])
@@ -268,6 +300,7 @@ def fetch_emails(job=None) -> list[dict]:
                     if rows:
                         print(f"  Parsed {subject}: {len(rows)} row(s)")
                         all_rows.extend(rows)
+                        parsed_ok = True
                         if job is not None:
                             from app.us_pto.jobs import update_job_progress
 
@@ -281,12 +314,25 @@ def fetch_emails(job=None) -> list[dict]:
                 else:
                     print(f"  Skipped {subject}: No HTML body found")
 
-    for num in ids:
-        mid = num.decode() if isinstance(num, bytes) else str(num)
-        imap.store(mid, "+FLAGS", "\\Seen")
+        if parsed_ok:
+            status, _ = imap.store(mid, "+FLAGS", "\\Seen")
+            if status != "OK":
+                seen_mark_failures += 1
+                print(f"  Warning: failed to mark message {mid} as read (status={status})")
+        else:
+            # Leave unparsed messages unseen so they surface again on the next
+            # run instead of being silently and permanently discarded.
+            unparsed_count += 1
 
     imap.logout()
-    return all_rows
+    if unparsed_count:
+        print(
+            f"{unparsed_count} message(s) left unread - could not find a recognizable "
+            "office-action table/HTML body. Review them manually."
+        )
+    if seen_mark_failures:
+        print(f"{seen_mark_failures} message(s) failed to be marked as read.")
+    return all_rows, unparsed_count
 
 
 def save_rows_to_db(rows: list[dict]) -> tuple[int, int]:
@@ -302,16 +348,23 @@ def run_fetch_for_ui(job=None) -> dict:
             from app.us_pto.jobs import update_job_progress
 
             update_job_progress(job, 0.0, "Connecting to mailbox…")
-        rows = fetch_emails(job=job)
+        rows, unparsed_count = fetch_emails(job=job)
         parsed_count = len(rows)
+        unparsed_suffix = (
+            f" {unparsed_count} email(s) left unread - no recognizable office-action "
+            "content found; review them manually."
+            if unparsed_count
+            else ""
+        )
         if not rows:
             return {
                 "status": "info",
-                "message": "No new email data extracted.",
+                "message": ("No new email data extracted." + unparsed_suffix).strip(),
                 "inserted_count": 0,
                 "parsed_count": 0,
                 "parsed_rows": [],
                 "skipped_duplicates": 0,
+                "unparsed_count": unparsed_count,
             }
         inserted, skipped_duplicates = save_rows_to_db(rows)
         if inserted == 0 and skipped_duplicates > 0:
@@ -330,6 +383,7 @@ def run_fetch_for_ui(job=None) -> dict:
                 )
             )
             status = "success"
+        message = (message + unparsed_suffix).strip()
         return {
             "status": status,
             "message": message,
@@ -337,6 +391,7 @@ def run_fetch_for_ui(job=None) -> dict:
             "parsed_count": parsed_count,
             "parsed_rows": parsed_rows_for_api(rows),
             "skipped_duplicates": skipped_duplicates,
+            "unparsed_count": unparsed_count,
         }
     except Exception as exc:
         return {
@@ -346,4 +401,5 @@ def run_fetch_for_ui(job=None) -> dict:
             "parsed_count": 0,
             "parsed_rows": [],
             "skipped_duplicates": 0,
+            "unparsed_count": 0,
         }

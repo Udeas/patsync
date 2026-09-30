@@ -5,23 +5,36 @@ from fastapi import APIRouter, HTTPException, Query
 import threading
 
 from app.us_pto.config import CALENDAR_DISPLAY_NAME, CALENDAR_ID, WORK_STATUS_CHOICES
+from app.us_pto.doc_code_rules import (
+    create_doc_code_rule,
+    delete_doc_code_rule,
+    list_doc_code_rules,
+    list_doc_codes_in_use,
+    update_doc_code_rule,
+)
 from app.us_pto.doc_codes import (
     config_for_api,
+    get_email_template_keys,
     load_doc_codes_config,
     save_doc_codes_config,
     yaml_email_template_value,
 )
 from app.us_pto.jobs import create_job, get_job, run_job_async, run_pipeline
-from app.us_pto.config import WORK_STATUS_DONE
+from app.us_pto.config import WORK_STATUS_CLOSED, WORK_STATUS_DONE
 from app.us_pto.repository import (
     get_automation_pending,
     list_entries_for_ui,
+    list_visible_doc_codes,
+    recompute_due_dates_for_doc_code,
     update_work_status_batch,
 )
 from app.us_pto.schemas import (
+    DocCodeRuleCreateRequest,
+    DocCodeRuleUpdateRequest,
     DocCodesUpdateRequest,
     DuplicateModeRequest,
     JobStatusResponse,
+    PipelineRunRequest,
     WorkStatusUpdateRequest,
 )
 from app.us_pto.steps.calendar_events import (
@@ -55,6 +68,14 @@ def get_config():
             {"key": "step-4", "label": "Step-4: Mark closed items and update calendar"},
         ],
     }
+
+
+@router.get("/doc-codes/in-use")
+def get_doc_codes_in_use():
+    """Doc codes for the View US Dockets filter dropdown: only codes that can
+    actually appear as a row there (tracked + present in uspto_tracker), not
+    every code ever parsed from email."""
+    return {"doc_codes": list_visible_doc_codes()}
 
 
 @router.get("/doc-codes")
@@ -99,6 +120,69 @@ def put_doc_codes(body: DocCodesUpdateRequest):
     return config_for_api()
 
 
+def _doc_code_rules_payload() -> dict:
+    rules = list_doc_code_rules()
+    rule_codes = {rule.doc_code for rule in rules}
+    available = [code for code in list_doc_codes_in_use() if code not in rule_codes]
+    return {
+        "rules": [
+            {
+                "doc_code": rule.doc_code,
+                "final_due_months": rule.final_due_months,
+                "final_due_extension_months": rule.final_due_extension_months,
+                "email_template": rule.email_template,
+            }
+            for rule in rules
+        ],
+        "available_doc_codes": available,
+        "email_template_keys": get_email_template_keys(),
+    }
+
+
+@router.get("/doc-code-rules")
+def get_doc_code_rules():
+    return _doc_code_rules_payload()
+
+
+@router.post("/doc-code-rules")
+def post_doc_code_rule(body: DocCodeRuleCreateRequest):
+    try:
+        create_doc_code_rule(
+            body.doc_code,
+            body.final_due_months,
+            body.final_due_extension_months,
+            body.email_template,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _doc_code_rules_payload()
+
+
+@router.put("/doc-code-rules/{doc_code}")
+def put_doc_code_rule(doc_code: str, body: DocCodeRuleUpdateRequest):
+    try:
+        update_doc_code_rule(
+            doc_code,
+            body.final_due_months,
+            body.final_due_extension_months,
+            body.email_template,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    due_dates_updated_count = (
+        recompute_due_dates_for_doc_code(doc_code) if body.apply_to_existing else 0
+    )
+    return {**_doc_code_rules_payload(), "due_dates_updated_count": due_dates_updated_count}
+
+
+@router.delete("/doc-code-rules/{doc_code}")
+def delete_doc_code_rule_endpoint(doc_code: str):
+    if not delete_doc_code_rule(doc_code):
+        raise HTTPException(status_code=404, detail=f"No rule found for doc code {doc_code}")
+    return _doc_code_rules_payload()
+
+
 @router.get("/entries")
 def get_entries(
     project_code: str = Query(""),
@@ -126,13 +210,19 @@ def patch_work_status(body: WorkStatusUpdateRequest):
 
     normalized = {int(key): value for key, value in body.updates.items()}
     completion_dates = {int(key): value for key, value in body.completion_dates.items()}
+    comments = {int(key): value for key, value in body.comments.items()}
     for entry_id, status in normalized.items():
-        if status == WORK_STATUS_DONE and entry_id not in completion_dates:
+        if status in (WORK_STATUS_DONE, WORK_STATUS_CLOSED) and not completion_dates.get(entry_id):
             raise HTTPException(
                 status_code=400,
-                detail=f"Completion date required for Done status (entry {entry_id}).",
+                detail=f"Completion date required for {status} status (entry {entry_id}).",
             )
-    update_work_status_batch(normalized, completion_dates=completion_dates)
+        if status == WORK_STATUS_CLOSED and not comments.get(entry_id, "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Comment required for Closed status (entry {entry_id}).",
+            )
+    update_work_status_batch(normalized, completion_dates=completion_dates, comments=comments)
     step4_result = None
     if body.run_step4_for_done:
         done_ids = [eid for eid, status in normalized.items() if status == WORK_STATUS_DONE]
@@ -167,9 +257,10 @@ def run_step_4():
 
 
 @router.post("/automation/pipeline/run")
-def run_complete_pipeline():
-    job = create_job("Complete Pipeline")
-    run_job_async(job, run_pipeline)
+def run_complete_pipeline(body: PipelineRunRequest = PipelineRunRequest()):
+    job_name = "Docket Only" if body.mode == "docket_only" else "Complete Pipeline"
+    job = create_job(job_name)
+    run_job_async(job, lambda j: run_pipeline(j, mode=body.mode))
     return {"job_id": job.job_id}
 
 

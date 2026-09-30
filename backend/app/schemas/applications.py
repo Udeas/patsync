@@ -33,6 +33,7 @@ class ApplicationCreate(SQLModel):
     application_title: str = Field(min_length=1)
     client_id: Optional[int] = None
     attorney_id: Optional[int] = None
+    client_docket_no: Optional[str] = None
     comments: Optional[str] = None
 
     @field_validator("application_number")
@@ -59,6 +60,7 @@ class ApplicationRead(SQLModel):
     application_title: str
     client_id: Optional[int] = None
     attorney_id: Optional[int] = None
+    client_docket_no: Optional[str] = None
     client: Optional[PatentClientSummary] = None
     attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
@@ -94,6 +96,7 @@ class ApplicationUpdate(SQLModel):
     application_title: Optional[str] = None
     client_id: Optional[int] = None
     attorney_id: Optional[int] = None
+    client_docket_no: Optional[str] = None
     comments: Optional[str] = None
 
     @field_validator("application_number")

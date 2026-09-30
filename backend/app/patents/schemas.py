@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import field_validator
 from sqlmodel import Field, SQLModel
 
+from app.domain.custom_events import validate_reminder_option
 from .validators import parse_in_application_number, validate_pct_international_number
 
 
@@ -67,6 +68,66 @@ class PatentStatusEventRead(SQLModel):
     status_date: date
 
 
+class PatentProjectNoteRead(SQLModel):
+    id: int
+    note_text: str
+    created_date: datetime
+
+
+class PatentCustomEventReminderRead(SQLModel):
+    kind: str
+    fire_on: date
+    label: str
+
+
+class PatentCustomEventRead(SQLModel):
+    id: int
+    event_type: str
+    event_date: date
+    reminder_option: str
+    reminder_date: Optional[date] = None
+    closure_date: Optional[date] = None
+    created_date: datetime
+
+
+class PatentCustomEventCreate(SQLModel):
+    event_type: str = Field(min_length=1)
+    event_date: date
+    reminder_option: str = "none"
+
+    @field_validator("reminder_option")
+    @classmethod
+    def validate_reminder(cls, value: str) -> str:
+        return validate_reminder_option(value)
+
+
+class PatentCustomEventClose(SQLModel):
+    closure_date: date
+
+
+class PatentDocketReminderRead(SQLModel):
+    kind: str
+    fire_on: date
+    label: str
+
+
+class PatentDocketEntryRead(SQLModel):
+    id: int
+    item_type: str
+    title: str
+    rule_reference: str
+    due_date: date
+    is_internal_target: bool = False
+    is_system_generated: bool = True
+    auto_satisfied: bool = False
+    closure_date: Optional[date] = None
+    created_date: datetime
+
+
+class PatentDocketEntryClose(SQLModel):
+    closure_date: date
+
+
 class PatentAgentSummary(SQLModel):
     id: int
     name: str
@@ -100,8 +161,15 @@ class PatentProjectCreate(SQLModel):
     client_docket_no: Optional[str] = None
     provisional_kind: Optional[Literal["OP", "ONP"]] = None
     pct_wipo_filed_only: bool = False
+    proof_of_right_furnished: bool = False
     international_application_no: Optional[str] = None
     international_application_date: Optional[date] = None
+    parent_project_id: Optional[int] = None
+    parent_application_no: Optional[str] = None
+    parent_application_date: Optional[date] = None
+    grant_number: Optional[str] = None
+    annuity_paid_upto: Optional[date] = None
+    next_annuity_due: Optional[date] = None
     inventors: list[PatentInventorInput] = Field(default_factory=list)
     priorities: list[PatentPriorityInput] = Field(default_factory=list)
     international_applications: list[PatentInternationalInput] = Field(default_factory=list)
@@ -137,18 +205,35 @@ class PatentProjectRead(SQLModel):
     application_type: Optional[str] = None
     provisional_kind: Optional[str] = None
     pct_wipo_filed_only: bool = False
+    parent_project_id: Optional[int] = None
+    parent_application_no: Optional[str] = None
+    parent_application_date: Optional[date] = None
+    parent_docket_no: Optional[str] = None
+    parent_client_docket_no: Optional[str] = None
+    parent_priority_dates: list[date] = Field(default_factory=list)
+    grant_number: Optional[str] = None
+    annuity_paid_upto: Optional[date] = None
+    next_annuity_due: Optional[date] = None
+    is_annuity_transferred: bool = False
+    proof_of_right_furnished: bool = False
     current_status_id: Optional[int] = None
     current_status_date: Optional[date] = None
     due_action: Optional[str] = None
     action_due_date: Optional[date] = None
     inventors: list[PatentInventorRead] = Field(default_factory=list)
-    priorities: list[PatentPriorityRead] = Field(default_factory=list)
+    priorities: Optional[list[PatentPriorityRead]] = Field(default_factory=list)
     international_applications: list[PatentInternationalRead] = Field(default_factory=list)
     status_events: list[PatentStatusEventRead] = Field(default_factory=list)
     attorney: Optional[PatentAgentSummary] = None
     client: Optional[PatentClientSummary] = None
     client_docket_no: Optional[str] = None
+    abandon_reason: Optional[str] = None
     is_archived: bool = False
+    notes: list[PatentProjectNoteRead] = Field(default_factory=list)
+    custom_events: list[PatentCustomEventRead] = Field(default_factory=list)
+    custom_event_reminders: list[PatentCustomEventReminderRead] = Field(default_factory=list)
+    docket_entries: list[PatentDocketEntryRead] = Field(default_factory=list)
+    docket_entry_reminders: list[PatentDocketReminderRead] = Field(default_factory=list)
 
 
 class PatentDraftFinalizeRequest(SQLModel):
@@ -165,6 +250,7 @@ class PatentDraftFinalizeRequest(SQLModel):
 class PatentStatusUpdate(SQLModel):
     status_id: int = Field(gt=0)
     status_date: date
+    abandon_reason: Optional[str] = None
 
 
 class PatentProjectUpdate(SQLModel):
@@ -183,6 +269,12 @@ class PatentProjectUpdate(SQLModel):
     client_id: Optional[int] = None
     provisional_kind: Optional[Literal["OP", "ONP"]] = None
     pct_wipo_filed_only: Optional[bool] = None
+    parent_project_id: Optional[int] = None
+    parent_application_no: Optional[str] = None
+    parent_application_date: Optional[date] = None
+    grant_number: Optional[str] = None
+    annuity_paid_upto: Optional[date] = None
+    next_annuity_due: Optional[date] = None
     inventors: Optional[list[PatentInventorInput]] = None
     priorities: Optional[list[PatentPriorityInput]] = None
     international_applications: Optional[list[PatentInternationalInput]] = None
@@ -237,6 +329,7 @@ class PatentClientInput(SQLModel):
     email: Optional[str] = None
     key_contacts: list[str] = Field(default_factory=list)
     docketing_email: Optional[str] = None
+    client_types: list[str] = Field(default_factory=list)
 
 
 class PatentClientRead(SQLModel):
@@ -247,6 +340,7 @@ class PatentClientRead(SQLModel):
     email: Optional[str] = None
     key_contacts: list[str] = Field(default_factory=list)
     docketing_email: Optional[str] = None
+    client_types: list[str] = Field(default_factory=list)
 
 
 class PatentClientUpdate(SQLModel):
@@ -256,3 +350,52 @@ class PatentClientUpdate(SQLModel):
     email: Optional[str] = None
     key_contacts: list[str] = Field(default_factory=list)
     docketing_email: Optional[str] = None
+    client_types: list[str] = Field(default_factory=list)
+
+
+class PatentAnnuityPaymentInput(SQLModel):
+    payment_date: date
+    years: list[int] = Field(min_length=1)
+
+
+class PatentAnnuityPaymentRead(SQLModel):
+    id: int
+    payment_date: date
+    total_fee: int
+    years: list[int] = Field(default_factory=list)
+    years_label: str = ""
+
+
+class PatentAnnuityScheduleRow(SQLModel):
+    year: int
+    due_date: date
+    fee: int
+    status: Literal["paid", "unpaid"]
+    payment_id: Optional[int] = None
+
+
+class PatentAnnuitySummary(SQLModel):
+    filing_date: Optional[date] = None
+    grant_date: Optional[date] = None
+    fee_category: str = "standard"
+    schedule: list[PatentAnnuityScheduleRow] = Field(default_factory=list)
+    payments: list[PatentAnnuityPaymentRead] = Field(default_factory=list)
+    paid_years: list[int] = Field(default_factory=list)
+    paid_till_year: Optional[int] = None
+    paid_till_date: Optional[date] = None
+    next_due_year: Optional[int] = None
+    next_due_date: Optional[date] = None
+    is_post_grant_deadline_pending: bool = False
+    accumulated_unpaid_years: list[int] = Field(default_factory=list)
+    orphaned_paid_years: list[int] = Field(default_factory=list)
+    is_transferred: bool = False
+    transferred_at: Optional[datetime] = None
+    transferred_comment: Optional[str] = None
+
+
+class PatentAnnuityTransferInput(SQLModel):
+    comment: str = Field(min_length=1)
+
+
+class PatentProjectNoteInput(SQLModel):
+    note_text: str = Field(min_length=1)

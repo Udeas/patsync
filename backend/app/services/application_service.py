@@ -29,6 +29,7 @@ from app.schemas.applications import (
     StatusRead,
 )
 from app.status_catalog import STATUS_ID_APPLICATION_FILED
+from app.audit.service import record_status_change
 
 
 def _utcnow() -> datetime:
@@ -70,6 +71,60 @@ def _states_grouped(
     return dict(grouped)
 
 
+def _client_summary(client: PatentClient) -> dict:
+    return {"id": client.id, "client_code": client.client_code, "name": client.name}
+
+
+def _attorney_summary(agent: PatentAgent) -> dict:
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "agent_code": agent.agent_code,
+        "address": agent.address,
+        "mobile_1": agent.mobile_1,
+        "mobile_2": agent.mobile_2,
+        "email_1": agent.email_1,
+        "email_2": agent.email_2,
+    }
+
+
+def _resolve_client_summary(session, client_id, clients_by_id):
+    if not client_id:
+        return None
+    if clients_by_id is not None:
+        return clients_by_id.get(client_id)
+    client = session.get(PatentClient, client_id)
+    return _client_summary(client) if client else None
+
+
+def _resolve_attorney_summary(session, attorney_id, agents_by_id):
+    if not attorney_id:
+        return None
+    if agents_by_id is not None:
+        return agents_by_id.get(attorney_id)
+    agent = session.get(PatentAgent, attorney_id)
+    return _attorney_summary(agent) if agent else None
+
+
+def _load_contacts_bulk(session: Session, datas) -> tuple[dict[int, dict], dict[int, dict]]:
+    """Batch-load client + attorney summaries for many rows (no per-row N+1)."""
+    client_ids = {d.client_id for d in datas if d.client_id}
+    attorney_ids = {d.attorney_id for d in datas if d.attorney_id}
+    clients_by_id: dict[int, dict] = {}
+    if client_ids:
+        for client in session.exec(
+            select(PatentClient).where(PatentClient.id.in_(client_ids))
+        ).all():
+            clients_by_id[client.id] = _client_summary(client)
+    agents_by_id: dict[int, dict] = {}
+    if attorney_ids:
+        for agent in session.exec(
+            select(PatentAgent).where(PatentAgent.id.in_(attorney_ids))
+        ).all():
+            agents_by_id[agent.id] = _attorney_summary(agent)
+    return clients_by_id, agents_by_id
+
+
 def _read_model_with_timeline(
     session: Session,
     data: ApplicationData,
@@ -77,6 +132,8 @@ def _read_model_with_timeline(
     status: Status,
     states_ordered: List[Tuple[int, date, str]],
     today: date,
+    clients_by_id: dict[int, dict] | None = None,
+    agents_by_id: dict[int, dict] | None = None,
 ) -> ApplicationRead:
     tl = build_timeline_for_application(
         states_ordered=states_ordered,
@@ -87,29 +144,8 @@ def _read_model_with_timeline(
         ReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
     ]
     filing_date = tl.filing_date or state.application_date
-    client_summary = None
-    if data.client_id:
-        client = session.get(PatentClient, data.client_id)
-        if client:
-            client_summary = {
-                "id": client.id,
-                "client_code": client.client_code,
-                "name": client.name,
-            }
-    attorney_summary = None
-    if data.attorney_id:
-        attorney = session.get(PatentAgent, data.attorney_id)
-        if attorney:
-            attorney_summary = {
-                "id": attorney.id,
-                "name": attorney.name,
-                "agent_code": attorney.agent_code,
-                "address": attorney.address,
-                "mobile_1": attorney.mobile_1,
-                "mobile_2": attorney.mobile_2,
-                "email_1": attorney.email_1,
-                "email_2": attorney.email_2,
-            }
+    client_summary = _resolve_client_summary(session, data.client_id, clients_by_id)
+    attorney_summary = _resolve_attorney_summary(session, data.attorney_id, agents_by_id)
     return ApplicationRead(
         id=data.id or 0,
         project_code=data.project_code,
@@ -121,6 +157,7 @@ def _read_model_with_timeline(
         application_title=data.application_title,
         client_id=data.client_id,
         attorney_id=data.attorney_id,
+        client_docket_no=data.client_docket_no,
         client=client_summary,
         attorney=attorney_summary,
         application_current_status=status.status,
@@ -161,6 +198,7 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
         applicant_name=application.applicant_name,
         client_id=application.client_id,
         attorney_id=application.attorney_id,
+        client_docket_no=application.client_docket_no,
         applicant_address=application.applicant_address,
         application_title=application.application_title,
         comments=application.comments,
@@ -220,8 +258,20 @@ def get_applications(session: Session) -> List[ApplicationRead]:
     today = date.today()
     nums = [data.application_num for data, _state, _status in rows]
     grouped = _states_grouped(session, nums)
+    clients_by_id, agents_by_id = _load_contacts_bulk(
+        session, [data for data, _state, _status in rows]
+    )
     return [
-        _read_model_with_timeline(session, data, state, status, grouped.get(data.application_num, []), today)
+        _read_model_with_timeline(
+            session,
+            data,
+            state,
+            status,
+            grouped.get(data.application_num, []),
+            today,
+            clients_by_id,
+            agents_by_id,
+        )
         for data, state, status in rows
     ]
 
@@ -327,6 +377,8 @@ def update_application(session: Session, application_id: int, update_data: Appli
         db_application.client_id = update_dict["client_id"]
     if "attorney_id" in update_dict:
         db_application.attorney_id = update_dict["attorney_id"]
+    if "client_docket_no" in update_dict:
+        db_application.client_docket_no = update_dict["client_docket_no"]
     if "applicant_address" in update_dict:
         db_application.applicant_address = update_dict["applicant_address"]
     if "application_title" in update_dict:
@@ -399,6 +451,17 @@ def update_application_status(
     if not status_row:
         raise ValueError("invalid status_id")
 
+    # Capture previous status name BEFORE any new state row is added
+    old_status_name = None
+    prev = session.exec(
+        select(ApplicationState, Status)
+        .join(Status)
+        .where(ApplicationState.application_num == db_application.application_num)
+        .order_by(desc(ApplicationState.id))
+    ).first()
+    if prev is not None:
+        old_status_name = prev[1].status
+
     existing_filled = _filled_status_dates(session, db_application.application_num)
     validate_status_change(
         existing_filled,
@@ -429,6 +492,14 @@ def update_application_status(
         )
     session.add(db_state)
     _touch_last_status_updated(db_application, now)
+    record_status_change(
+        session,
+        entity_type="design",
+        entity_id=db_application.id,
+        entity_label=db_application.project_code,
+        old_status=old_status_name,
+        new_status=status_row.status,
+    )
     session.commit()
     return get_application_by_id(session, application_id)
 

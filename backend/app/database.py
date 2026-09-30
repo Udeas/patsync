@@ -9,7 +9,19 @@ from app.tm_status_catalog import TM_STATUS_SEED
 load_dotenv()
 
 sqlite_url = os.getenv("DATABASE_URL")
-engine = create_engine(sqlite_url, echo=True)
+
+# Without these, a blocked lock acquisition (e.g. an ALTER TABLE stuck behind
+# a stale "idle in transaction" session) waits forever - there's no default
+# statement/lock timeout on Postgres. Bounding both means schema-migration
+# DDL fails fast with a clear error instead of hanging the request/thread
+# indefinitely. pool_pre_ping avoids surfacing a stale pooled connection
+# (e.g. one Supabase silently dropped) as a hang on first use.
+_connect_args = (
+    {"options": "-c statement_timeout=30000 -c lock_timeout=10000"}
+    if sqlite_url and sqlite_url.startswith("postgres")
+    else {}
+)
+engine = create_engine(sqlite_url, echo=True, pool_pre_ping=True, connect_args=_connect_args)
 
 
 def _run_postgres_migrations(conn) -> None:
@@ -221,6 +233,14 @@ def _run_postgres_migrations(conn) -> None:
             """
         )
     )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE application_data
+            ADD COLUMN IF NOT EXISTS client_docket_no VARCHAR;
+            """
+        )
+    )
 
     conn.execute(
         text(
@@ -377,6 +397,82 @@ def _run_postgres_tm_migrations(conn) -> None:
             """
         )
     )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS client_docket_no VARCHAR;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS applicant_type VARCHAR;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS tm_type VARCHAR;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS is_multi_class BOOLEAN NOT NULL DEFAULT FALSE;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS tm_selected_classes TEXT;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            ALTER TABLE tm_application_data
+            ADD COLUMN IF NOT EXISTS application_class_description TEXT;
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_project_note (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_custom_event (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                event_type VARCHAR NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option VARCHAR NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
 
 
 def _sqlite_column_exists(conn, table_name: str, column_name: str) -> bool:
@@ -482,6 +578,8 @@ def _run_sqlite_migrations(conn) -> None:
         conn.execute(text("ALTER TABLE application_data ADD COLUMN client_id INTEGER"))
     if not _sqlite_column_exists(conn, "application_data", "attorney_id"):
         conn.execute(text("ALTER TABLE application_data ADD COLUMN attorney_id INTEGER"))
+    if not _sqlite_column_exists(conn, "application_data", "client_docket_no"):
+        conn.execute(text("ALTER TABLE application_data ADD COLUMN client_docket_no TEXT"))
     if not _sqlite_column_exists(conn, "application_data", "created_date"):
         conn.execute(
             text("ALTER TABLE application_data ADD COLUMN created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
@@ -585,6 +683,48 @@ def _run_sqlite_tm_migrations(conn) -> None:
         conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN client_id INTEGER"))
     if not _sqlite_column_exists(conn, "tm_application_data", "attorney_id"):
         conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN attorney_id INTEGER"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "client_docket_no"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN client_docket_no TEXT"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "applicant_type"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN applicant_type TEXT"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "tm_type"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN tm_type TEXT"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "is_multi_class"):
+        conn.execute(
+            text("ALTER TABLE tm_application_data ADD COLUMN is_multi_class BOOLEAN NOT NULL DEFAULT 0")
+        )
+    if not _sqlite_column_exists(conn, "tm_application_data", "tm_selected_classes"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN tm_selected_classes TEXT"))
+    if not _sqlite_column_exists(conn, "tm_application_data", "application_class_description"):
+        conn.execute(text("ALTER TABLE tm_application_data ADD COLUMN application_class_description TEXT"))
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_project_note (
+                id INTEGER PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS tm_custom_event (
+                id INTEGER PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                event_type TEXT NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option TEXT NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
 
 
 def _seed_patent_statuses(conn, backend: str) -> None:
@@ -650,10 +790,45 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                     "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT FALSE"
                 )
             )
+        if not _postgres_column_exists(conn, "patent_project", "proof_of_right_furnished"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN proof_of_right_furnished BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
         if not _postgres_column_exists(conn, "patent_project", "is_archived"):
             conn.execute(
                 text(
                     "ALTER TABLE patent_project ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+        if not _postgres_column_exists(conn, "patent_project", "abandon_reason"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN abandon_reason TEXT"))
+        if not _postgres_column_exists(conn, "patent_project", "parent_project_id"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN parent_project_id INTEGER REFERENCES patent_project(id)"
+                )
+            )
+        if not _postgres_column_exists(conn, "patent_project", "parent_application_no"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_application_no VARCHAR"))
+        if not _postgres_column_exists(conn, "patent_project", "parent_application_date"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_application_date DATE"))
+        if not _postgres_column_exists(conn, "patent_project", "grant_number"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN grant_number VARCHAR"))
+        if not _postgres_column_exists(conn, "patent_project", "annuity_paid_upto"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_paid_upto DATE"))
+        if not _postgres_column_exists(conn, "patent_project", "next_annuity_due"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN next_annuity_due DATE"))
+        if not _postgres_column_exists(conn, "patent_project", "annuity_transferred_at"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_at TIMESTAMPTZ"))
+        if not _postgres_column_exists(conn, "patent_project", "annuity_transferred_comment"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_comment TEXT"))
+        if not _postgres_column_exists(conn, "patent_client", "client_types"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_client ADD COLUMN client_types TEXT "
+                    "DEFAULT '[\"patent\",\"trademark\",\"design\"]'"
                 )
             )
         conn.execute(
@@ -697,6 +872,78 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_annuity_payment (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    payment_date DATE NOT NULL,
+                    total_fee INTEGER NOT NULL,
+                    created_date TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_annuity_payment_year (
+                    id SERIAL PRIMARY KEY,
+                    payment_id INTEGER NOT NULL REFERENCES patent_annuity_payment(id),
+                    renewal_year INTEGER NOT NULL
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_project_note (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    note_text TEXT NOT NULL,
+                    created_date TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_custom_event (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    event_type VARCHAR NOT NULL,
+                    event_date DATE NOT NULL,
+                    reminder_option VARCHAR NOT NULL,
+                    reminder_date DATE,
+                    closure_date DATE,
+                    created_date TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS patent_docket_entry (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                    item_type VARCHAR NOT NULL,
+                    title VARCHAR NOT NULL,
+                    rule_reference VARCHAR NOT NULL,
+                    due_date DATE NOT NULL,
+                    is_internal_target BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_system_generated BOOLEAN NOT NULL DEFAULT TRUE,
+                    auto_satisfied BOOLEAN NOT NULL DEFAULT FALSE,
+                    closure_date DATE,
+                    created_date TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT uq_patent_docket_entry_project_item UNIQUE (project_id, item_type)
+                );
+                """
+            )
+        )
         return
 
     if _sqlite_column_exists(conn, "patent_project", "id"):
@@ -710,10 +957,41 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                     "ALTER TABLE patent_project ADD COLUMN pct_wipo_filed_only BOOLEAN NOT NULL DEFAULT 0"
                 )
             )
+        if not _sqlite_column_exists(conn, "patent_project", "proof_of_right_furnished"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_project ADD COLUMN proof_of_right_furnished BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
         if not _sqlite_column_exists(conn, "patent_project", "is_archived"):
             conn.execute(
                 text(
                     "ALTER TABLE patent_project ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+        if not _sqlite_column_exists(conn, "patent_project", "abandon_reason"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN abandon_reason TEXT"))
+        if not _sqlite_column_exists(conn, "patent_project", "parent_project_id"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_project_id INTEGER REFERENCES patent_project(id)"))
+        if not _sqlite_column_exists(conn, "patent_project", "parent_application_no"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_application_no TEXT"))
+        if not _sqlite_column_exists(conn, "patent_project", "parent_application_date"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN parent_application_date DATE"))
+        if not _sqlite_column_exists(conn, "patent_project", "grant_number"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN grant_number TEXT"))
+        if not _sqlite_column_exists(conn, "patent_project", "annuity_paid_upto"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_paid_upto DATE"))
+        if not _sqlite_column_exists(conn, "patent_project", "next_annuity_due"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN next_annuity_due DATE"))
+        if not _sqlite_column_exists(conn, "patent_project", "annuity_transferred_at"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_at TIMESTAMP"))
+        if not _sqlite_column_exists(conn, "patent_project", "annuity_transferred_comment"):
+            conn.execute(text("ALTER TABLE patent_project ADD COLUMN annuity_transferred_comment TEXT"))
+        if not _sqlite_column_exists(conn, "patent_client", "client_types"):
+            conn.execute(
+                text(
+                    "ALTER TABLE patent_client ADD COLUMN client_types TEXT "
+                    "DEFAULT '[\"patent\",\"trademark\",\"design\"]'"
                 )
             )
     conn.execute(
@@ -737,6 +1015,78 @@ def _run_patent_metadata_migrations(conn, backend: str) -> None:
                 name TEXT NOT NULL,
                 country TEXT,
                 address TEXT
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_annuity_payment (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                payment_date DATE NOT NULL,
+                total_fee INTEGER NOT NULL,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_annuity_payment_year (
+                id INTEGER PRIMARY KEY,
+                payment_id INTEGER NOT NULL REFERENCES patent_annuity_payment(id),
+                renewal_year INTEGER NOT NULL
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_project_note (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_custom_event (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                event_type TEXT NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option TEXT NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS patent_docket_entry (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES patent_project(id),
+                item_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                rule_reference TEXT NOT NULL,
+                due_date DATE NOT NULL,
+                is_internal_target BOOLEAN NOT NULL DEFAULT 0,
+                is_system_generated BOOLEAN NOT NULL DEFAULT 1,
+                auto_satisfied BOOLEAN NOT NULL DEFAULT 0,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (project_id, item_type)
             );
             """
         )
@@ -812,11 +1162,156 @@ def _run_uspto_tracker_migration(conn, backend: str) -> None:
                 "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS completion_date DATE"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS comment TEXT NOT NULL DEFAULT ''"
+            )
+        )
     else:
         cols = conn.execute(text("PRAGMA table_info(uspto_tracker)")).fetchall()
         col_names = {row[1] for row in cols} if cols else set()
         if "completion_date" not in col_names:
             conn.execute(text("ALTER TABLE uspto_tracker ADD COLUMN completion_date TEXT"))
+        if "comment" not in col_names:
+            conn.execute(
+                text("ALTER TABLE uspto_tracker ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
+            )
+
+
+def _run_doc_code_rules_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS doc_code_rules (
+                    id SERIAL PRIMARY KEY,
+                    doc_code VARCHAR(32) NOT NULL,
+                    final_due_months INTEGER NOT NULL,
+                    final_due_extension_months INTEGER NOT NULL,
+                    email_template VARCHAR(64),
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_doc_code_rules_doc_code UNIQUE (doc_code)
+                );
+                """
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS doc_code_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    doc_code TEXT NOT NULL,
+                    final_due_months INTEGER NOT NULL,
+                    final_due_extension_months INTEGER NOT NULL,
+                    email_template TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE (doc_code)
+                );
+                """
+            )
+        )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_doc_code_rules_doc_code ON doc_code_rules (doc_code)"
+        )
+    )
+
+
+def _run_users_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(64) NOT NULL UNIQUE,
+                    display_name VARCHAR(128) NOT NULL DEFAULT '',
+                    password_hash VARCHAR(255) NOT NULL,
+                    role VARCHAR(16) NOT NULL DEFAULT 'user',
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_lower "
+                "ON users (lower(username))"
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                """
+            )
+        )
+
+
+def _run_audit_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id SERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    actor_user_id INTEGER,
+                    actor_username VARCHAR(64),
+                    action VARCHAR(32) NOT NULL,
+                    entity_type VARCHAR(32),
+                    entity_id INTEGER,
+                    entity_label VARCHAR(255),
+                    changes TEXT,
+                    ip_address VARCHAR(64)
+                );
+                """
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    actor_user_id INTEGER,
+                    actor_username TEXT,
+                    action TEXT NOT NULL,
+                    entity_type TEXT,
+                    entity_id INTEGER,
+                    entity_label TEXT,
+                    changes TEXT,
+                    ip_address TEXT
+                );
+                """
+            )
+        )
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_created_at ON audit_log (created_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_actor_user_id ON audit_log (actor_user_id)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_entity_type ON audit_log (entity_type)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_log_action ON audit_log (action)"))
+    if backend == "postgresql":
+        if not _postgres_column_exists(conn, "audit_log", "user_agent"):
+            conn.execute(text("ALTER TABLE audit_log ADD COLUMN user_agent TEXT"))
+    else:
+        if not _sqlite_column_exists(conn, "audit_log", "user_agent"):
+            conn.execute(text("ALTER TABLE audit_log ADD COLUMN user_agent TEXT"))
 
 
 def run_schema_migrations():
@@ -828,6 +1323,9 @@ def run_schema_migrations():
             _run_sqlite_migrations(conn)
         _run_patent_metadata_migrations(conn, backend)
         _run_uspto_tracker_migration(conn, backend)
+        _run_doc_code_rules_migration(conn, backend)
+        _run_users_migration(conn, backend)
+        _run_audit_migration(conn, backend)
         _seed_patent_statuses(conn, backend)
         _seed_tm_statuses(conn, backend)
 

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Dict
 
-VALID_TM_CLASS_VALUES = {str(i) for i in range(1, 46)} | {"99"}
+SINGLE_CLASS_VALUES = {str(i) for i in range(1, 46)}
+MULTI_CLASS_MAIN_VALUE = "99"
+VALID_TM_CLASS_VALUES = SINGLE_CLASS_VALUES | {MULTI_CLASS_MAIN_VALUE}
 
 TM_CLASS_DESCRIPTIONS: Dict[str, str] = {
     "1": "Chemicals for use in industry, science and photography, as well as in agriculture, horticulture and forestry; unprocessed artificial resins, unprocessed plastics; fire extinguishing and fire prevention compositions; tempering and soldering preparations; substances for tanning animal skins and hides; adhesives for use in industry; putties and other paste fillers; compost, manures, fertilisers; biological preparations for use in industry and science.",
