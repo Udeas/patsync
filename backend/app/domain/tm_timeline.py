@@ -75,6 +75,7 @@ def build_timeline_for_tm_application(
     states_ordered: list[tuple[int, date, str]],
     current_status_name: str,
     today: date,
+    registered_note: str | None = None,
 ) -> TmTimelineComputation:
     """
     Trademark reminders:
@@ -89,11 +90,15 @@ def build_timeline_for_tm_application(
       the next step once the mark is registered.
     None of these are gated on today - an overdue reminder keeps showing
     (as overdue) instead of silently disappearing once its date passes.
-    They're gated on current_status_name instead (the combined dated/
-    sub-status "current status" - see app.domain.tm_sub_status), so a
-    reminder correctly drops once the project moves past the status it
-    belongs to, whether that's a later dated milestone or an informative
-    sub-status like "FER Response Filed".
+    Most are gated on current_status_name (the combined dated/sub-status
+    "current status" - see app.domain.tm_sub_status), so a reminder
+    correctly drops once the project moves past the status it belongs to,
+    whether that's a later dated milestone or an informative sub-status.
+    "Registration Certificate Due" is the one exception: it requires BOTH
+    the Registered date AND its Journal/Registration No. note to be filled
+    (per product spec) before it clears - entering the Registered date
+    alone (leaving the note blank) is not enough, so it's checked directly
+    against registered_note rather than via current_status_name.
     """
     filing = _date_for_status(states_ordered, "Application filed")
     formality_fail = _date_for_status(states_ordered, STATUS_TM_FORMALITY_FAIL)
@@ -101,12 +106,16 @@ def build_timeline_for_tm_application(
     notice_132 = _date_for_status(states_ordered, STATUS_TM_NOTICE_132_ISSUED)
     hearing = _date_for_status(states_ordered, STATUS_TM_HEARING)
     accepted_advertised = _date_for_status(states_ordered, STATUS_TM_ACCEPTED_ADVERTISED)
+    registered_date = _date_for_status(states_ordered, STATUS_TM_REGISTERED)
 
     formality_fail_followup = add_one_calendar_month(formality_fail) if formality_fail else None
     fer_followup = add_one_calendar_month(fer_issued) if fer_issued else None
     notice_132_followup = add_one_calendar_month(notice_132) if notice_132 else None
     hearing_response_due = hearing + timedelta(days=15) if hearing else None
     registration_certificate_due = add_months(accepted_advertised, 3) if accepted_advertised else None
+    registration_certificate_satisfied = registered_date is not None and bool(
+        (registered_note or "").strip()
+    )
     renewal_due = add_years(filing, RENEWAL_YEARS_FROM_FILING) if filing else None
     upcoming: List[ReminderComputation] = []
 
@@ -153,7 +162,11 @@ def build_timeline_for_tm_application(
             )
         )
 
-    if current_status_name == STATUS_TM_ACCEPTED_ADVERTISED and registration_certificate_due:
+    if (
+        accepted_advertised
+        and registration_certificate_due
+        and not registration_certificate_satisfied
+    ):
         upcoming.append(
             ReminderComputation(
                 kind="registration_certificate_due",
