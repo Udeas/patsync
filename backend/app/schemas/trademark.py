@@ -225,11 +225,16 @@ class TmApplicationRead(SQLModel):
     client: Optional[PatentClientSummary] = None
     attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
-    is_under_hearing: bool = False
+    main_status_phase: str = ""
+    sub_status: Optional[str] = None
     comments: Optional[str] = None
     filing_date: Optional[date] = None
+    formality_fail_followup_due: Optional[date] = None
     fer_followup_due: Optional[date] = None
+    notice_132_followup_due: Optional[date] = None
     hearing_due: Optional[date] = None
+    hearing_response_due: Optional[date] = None
+    registration_certificate_due: Optional[date] = None
     renewal_due: Optional[date] = None
     upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
     last_status_updated_at: Optional[datetime] = None
@@ -355,6 +360,7 @@ class TmProjectTimelineItem(SQLModel):
     status_id: int
     status_name: str
     application_date: Optional[date] = None
+    note: Optional[str] = None
     is_optional: bool = False
     is_enabled: bool = True
 
@@ -381,25 +387,32 @@ class TmProjectDetailRead(SQLModel):
     client: Optional[PatentClientSummary] = None
     attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
-    is_under_hearing: bool = False
+    main_status_phase: str = ""
+    sub_status: Optional[str] = None
     comments: Optional[str] = None
     filing_date: Optional[date] = None
+    formality_fail_followup_due: Optional[date] = None
     fer_followup_due: Optional[date] = None
+    notice_132_followup_due: Optional[date] = None
     hearing_due: Optional[date] = None
+    hearing_response_due: Optional[date] = None
+    registration_certificate_due: Optional[date] = None
     renewal_due: Optional[date] = None
     upcoming_reminders: List[TmReminderRead] = Field(default_factory=list)
     notes: List[TmProjectNoteRead] = Field(default_factory=list)
     custom_events: List[TmCustomEventRead] = Field(default_factory=list)
     timeline: list[TmProjectTimelineItem]
+    sub_status_choices: List[str] = Field(default_factory=list)
 
 
 class TmTimelineStatusUpdate(SQLModel):
     status_id: int = Field(gt=0)
     # None clears a previously-set milestone date (deletes its tm_application_state row).
     application_date: Optional[date] = None
+    note: Optional[str] = None
 
 
 class TmProjectDetailUpdate(SQLModel):
     application: TmApplicationUpdate
     timeline_updates: list[TmTimelineStatusUpdate] = Field(default_factory=list)
-    is_under_hearing: Optional[bool] = None
+    sub_status: Optional[str] = None
