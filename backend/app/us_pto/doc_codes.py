@@ -77,16 +77,24 @@ def normalize_email_template_value(raw: Any) -> str | None:
     return value.upper()
 
 
-def get_email_template_for_code(doc_code: str) -> str | None:
+def get_email_template_for_code(doc_code: str, *, rules_by_code: dict[str, Any] | None = None) -> str | None:
     """Doc-code-rule email template if the code has a rule, else the legacy
     YAML tracked_doc_codes mapping. Once a doc code has a rule, that rule is
     the sole source of truth for it - no YAML fallback - so clearing the
-    template on the rule means "no email", not "check the old config"."""
+    template on the rule means "no email", not "check the old config".
+
+    Pass a precomputed `rules_by_code` (doc_code -> DocCodeRule) when calling
+    this in a loop over many rows - otherwise every call hits the DB once for
+    `get_doc_code_rule`, which is fine for a single lookup but an N+1 when
+    checked per-row across the whole tracker table."""
     normalized = str(doc_code or "").strip().upper()
 
-    from app.us_pto.doc_code_rules import get_doc_code_rule
+    if rules_by_code is not None:
+        db_rule = rules_by_code.get(normalized)
+    else:
+        from app.us_pto.doc_code_rules import get_doc_code_rule
 
-    db_rule = get_doc_code_rule(normalized)
+        db_rule = get_doc_code_rule(normalized)
     if db_rule is not None:
         return normalize_email_template_value(db_rule.email_template)
 
@@ -118,8 +126,8 @@ def yaml_email_template_value(raw: Any) -> str | None:
     return "None"
 
 
-def code_requires_email_draft(doc_code: str) -> bool:
-    return get_email_template_for_code(doc_code) is not None
+def code_requires_email_draft(doc_code: str, *, rules_by_code: dict[str, Any] | None = None) -> bool:
+    return get_email_template_for_code(doc_code, rules_by_code=rules_by_code) is not None
 
 
 def get_code_to_profile_map() -> dict[str, str]:

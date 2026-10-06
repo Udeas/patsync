@@ -20,6 +20,7 @@ class UsptoTracker(SQLModel, table=True):
     completion_date: Optional[date] = None
     comment: str = Field(default="")
     calendar_event_ids: str = Field(default="")
+    calendar_status: str = Field(default="", max_length=64)
     template_status: str = Field(default="", max_length=64)
     is_closure_done: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)

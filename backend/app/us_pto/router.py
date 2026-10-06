@@ -32,6 +32,7 @@ from app.us_pto.schemas import (
     DocCodeRuleCreateRequest,
     DocCodeRuleUpdateRequest,
     DocCodesUpdateRequest,
+    DraftCreateRequest,
     DuplicateModeRequest,
     JobStatusResponse,
     PipelineRunRequest,
@@ -303,7 +304,11 @@ def step_2_preview(body: DuplicateModeRequest):
 def step_2_create(body: DuplicateModeRequest):
     job = create_job("Step 2: Calendar events")
     duplicate_mode = body.duplicate_mode
-    run_job_async(job, lambda j: create_events_for_ui(duplicate_mode, job=j))
+    excluded_ids = set(body.excluded_entry_ids)
+    run_job_async(
+        job,
+        lambda j: create_events_for_ui(duplicate_mode, job=j, excluded_entry_ids=excluded_ids),
+    )
     return {"job_id": job.job_id}
 
 
@@ -327,9 +332,10 @@ def step_3_preview():
 
 
 @router.post("/automation/step-3/create")
-def step_3_create():
+def step_3_create(body: DraftCreateRequest = DraftCreateRequest()):
     job = create_job("Step 3: Gmail drafts")
-    run_job_async(job, create_drafts_for_ui)
+    excluded_ids = set(body.excluded_entry_ids)
+    run_job_async(job, lambda j: create_drafts_for_ui(j, excluded_entry_ids=excluded_ids))
     return {"job_id": job.job_id}
 
 

@@ -9,7 +9,12 @@ from dateutil.relativedelta import relativedelta
 
 from app.us_pto.auth.calendar import get_calendar_service
 from app.us_pto.config import CALENDAR_ID, HTML_BACKUP_FILE
-from app.us_pto.repository import init_db, list_calendar_candidates, update_entry
+from app.us_pto.repository import (
+    SKIPPED_CALENDAR_STATUS,
+    init_db,
+    list_calendar_candidates,
+    update_entry,
+)
 
 
 def normalize_cell_value(value) -> str:
@@ -172,8 +177,11 @@ def get_creation_candidates_for_ui(duplicate_mode: str) -> dict:
     }
 
 
-def create_events_for_ui(duplicate_mode: str, *, job=None) -> dict:
+def create_events_for_ui(
+    duplicate_mode: str, *, job=None, excluded_entry_ids: set[int] | None = None
+) -> dict:
     init_db()
+    excluded_entry_ids = excluded_entry_ids or set()
     creation_candidates = list_calendar_candidates(duplicate_mode=duplicate_mode)
     if not creation_candidates:
         return {
@@ -185,6 +193,25 @@ def create_events_for_ui(duplicate_mode: str, *, job=None) -> dict:
             "event_count": 0,
             "reminder_event_count": 0,
             "appended_count": 0,
+            "skipped_count": 0,
+        }
+
+    included = [c for c in creation_candidates if c["entry_id"] not in excluded_entry_ids]
+    skipped = [c for c in creation_candidates if c["entry_id"] in excluded_entry_ids]
+    for candidate in skipped:
+        update_entry(candidate["entry_id"], calendar_status=SKIPPED_CALENDAR_STATUS)
+
+    if not included:
+        return {
+            "status": "info",
+            "message": "All candidate rows were unchecked; nothing created.",
+            "created_rows": [],
+            "failed_rows": [],
+            "candidate_count": 0,
+            "event_count": 0,
+            "reminder_event_count": 0,
+            "appended_count": 0,
+            "skipped_count": len(skipped),
         }
 
     if job is not None:
@@ -193,11 +220,11 @@ def create_events_for_ui(duplicate_mode: str, *, job=None) -> dict:
         update_job_progress(
             job,
             0.0,
-            f"Authorizing calendar — {len(creation_candidates)} row(s) to process…",
+            f"Authorizing calendar — {len(included)} row(s) to process…",
         )
     service = get_calendar_service()
     created_rows, failed_rows = create_events_for_candidates(
-        service, creation_candidates, job=job
+        service, included, job=job
     )
     if job is not None:
         from app.us_pto.jobs import update_job_progress
@@ -205,7 +232,7 @@ def create_events_for_ui(duplicate_mode: str, *, job=None) -> dict:
         update_job_progress(job, 0.95, "Updating master sheet backup…")
     appended_count = append_backup_rows(HTML_BACKUP_FILE, created_rows)
 
-    candidate_count = len(creation_candidates)
+    candidate_count = len(included)
     return {
         "status": "success" if not failed_rows else "partial",
         "message": "events created successfully",
@@ -213,8 +240,9 @@ def create_events_for_ui(duplicate_mode: str, *, job=None) -> dict:
         "failed_rows": failed_rows,
         "candidate_count": candidate_count,
         "event_count": candidate_count,
-        "reminder_event_count": _reminder_event_count(creation_candidates),
+        "reminder_event_count": _reminder_event_count(included),
         "appended_count": appended_count,
+        "skipped_count": len(skipped),
     }
 
 

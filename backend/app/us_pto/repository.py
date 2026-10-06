@@ -16,7 +16,7 @@ from app.us_pto.database import get_us_pto_engine
 from app.us_pto.doc_code_rules import build_calendar_reminder_rules, list_doc_code_rules
 from app.us_pto.doc_codes import code_requires_email_draft, get_tracked_doc_codes
 from app.us_pto.due_dates import compute_due_dates
-from app.us_pto.models import UsptoTracker
+from app.us_pto.models import DocCodeRule, UsptoTracker
 
 
 def normalize_doc_code(value: Any) -> str:
@@ -75,6 +75,7 @@ def _entry_to_dict(entry: UsptoTracker) -> dict:
         "event_date": entry.event_date,
         "final_due_date": _format_due_date(entry.final_due_date),
         "calendar_event_ids": entry.calendar_event_ids,
+        "calendar_status": entry.calendar_status,
         "template_status": entry.template_status,
         "work_status": entry.work_status,
         "closure_processed": entry.is_closure_done,
@@ -100,14 +101,17 @@ def _is_finished_status(value: str | None) -> bool:
     return _is_done_status(value) or _is_closed_status(value)
 
 
-def _tracked_code_set() -> set[str]:
+def _tracked_code_set(rules: list[DocCodeRule] | None = None) -> set[str]:
+    if rules is None:
+        rules = list_doc_code_rules()
     tracked = {normalize_doc_code(c) for c in get_tracked_doc_codes()}
-    tracked.update(rule.doc_code for rule in list_doc_code_rules())
+    tracked.update(rule.doc_code for rule in rules)
     return tracked
 
 
-def _entry_is_tracked(entry: UsptoTracker) -> bool:
-    tracked = _tracked_code_set()
+def _entry_is_tracked(entry: UsptoTracker, tracked: set[str] | None = None) -> bool:
+    if tracked is None:
+        tracked = _tracked_code_set()
     if not tracked:
         return True
     return normalize_doc_code(entry.doc_code) in tracked
@@ -135,12 +139,22 @@ def _format_template_status_label(raw: str) -> str:
         return "Draft created"
     if lowered == "not required":
         return "Not required"
+    if lowered == SKIPPED_TEMPLATE_STATUS.lower():
+        return "Skipped by user"
     return template
+
+
+def _format_calendar_status_label(entry: UsptoTracker) -> str:
+    if (entry.calendar_event_ids or "").strip():
+        return "Created"
+    if (entry.calendar_status or "").strip() == SKIPPED_CALENDAR_STATUS:
+        return "Skipped by user"
+    return ""
 
 
 def _entry_to_ui_dict(entry: UsptoTracker) -> dict:
     """Fields exposed to View US Dockets (matches legacy Streamlit grid)."""
-    calendar_label = "Created" if (entry.calendar_event_ids or "").strip() else ""
+    calendar_label = _format_calendar_status_label(entry)
     template_label = _format_template_status_label(entry.template_status)
     return {
         "id": entry.id,
@@ -346,22 +360,27 @@ def _sync_empty_work_status_to_pending(session: Session, rows: list[UsptoTracker
 
 
 NOT_REQUIRED_TEMPLATE_STATUS = "Not required"
+SKIPPED_TEMPLATE_STATUS = "Skipped"
+SKIPPED_CALENDAR_STATUS = "Skipped"
 
 
 def sync_email_not_required_for_ineligible() -> int:
     """Mark template_status for tracked rows without a configured email template."""
     init_db()
     updated = 0
+    rules = list_doc_code_rules()
+    tracked = _tracked_code_set(rules)
+    rules_by_code = {rule.doc_code: rule for rule in rules}
     with Session(get_us_pto_engine()) as session:
         rows = list(session.scalars(select(UsptoTracker).order_by(UsptoTracker.id)).all())
         for entry in rows:
-            if not _entry_is_tracked(entry):
+            if not _entry_is_tracked(entry, tracked):
                 continue
             if _is_finished_status(entry.work_status):
                 continue
             if (entry.template_status or "").strip():
                 continue
-            if code_requires_email_draft(entry.doc_code):
+            if code_requires_email_draft(entry.doc_code, rules_by_code=rules_by_code):
                 continue
             entry.template_status = NOT_REQUIRED_TEMPLATE_STATUS
             entry.updated_at = _now()
@@ -498,16 +517,23 @@ def get_automation_pending() -> dict:
     with Session(get_us_pto_engine()) as session:
         rows = list(session.scalars(select(UsptoTracker).order_by(UsptoTracker.id)).all())
 
+    rules = list_doc_code_rules()
+    tracked = _tracked_code_set(rules)
+    rules_by_code = {rule.doc_code: rule for rule in rules}
     for entry in rows:
-        if not _entry_is_tracked(entry):
+        if not _entry_is_tracked(entry, tracked):
             continue
         if _is_finished_status(entry.work_status):
             continue
 
-        if not (entry.calendar_event_ids or "").strip():
+        if not (entry.calendar_event_ids or "").strip() and (
+            entry.calendar_status or ""
+        ).strip() != SKIPPED_CALENDAR_STATUS:
             calendar_pending.append(_pending_row_summary(entry))
 
-        if code_requires_email_draft(entry.doc_code) and not (entry.template_status or "").strip():
+        if code_requires_email_draft(
+            entry.doc_code, rules_by_code=rules_by_code
+        ) and not (entry.template_status or "").strip():
             email_pending.append(_pending_row_summary(entry))
 
     return {
@@ -540,6 +566,8 @@ def list_calendar_candidates(*, duplicate_mode: str = "all") -> list[dict]:
             continue
         if entry.get("calendar_event_ids"):
             continue
+        if entry.get("calendar_status") == SKIPPED_CALENDAR_STATUS:
+            continue
         if _is_finished_status(entry.get("work_status")):
             continue
 
@@ -571,13 +599,15 @@ def list_draft_candidates() -> list[dict]:
     init_db()
     sync_email_not_required_for_ineligible()
     entries = list_entries()
-    tracked = _tracked_code_set()
+    rules = list_doc_code_rules()
+    tracked = _tracked_code_set(rules)
+    rules_by_code = {rule.doc_code: rule for rule in rules}
     results: list[dict] = []
     for entry in entries:
         doc_code = normalize_doc_code(entry["doc_code"])
         if tracked and doc_code not in tracked:
             continue
-        if not code_requires_email_draft(doc_code):
+        if not code_requires_email_draft(doc_code, rules_by_code=rules_by_code):
             continue
         if _is_finished_status(entry.get("work_status")):
             continue

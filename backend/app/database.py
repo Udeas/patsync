@@ -1167,6 +1167,12 @@ def _run_uspto_tracker_migration(conn, backend: str) -> None:
                 "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS comment TEXT NOT NULL DEFAULT ''"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS calendar_status "
+                "VARCHAR(64) NOT NULL DEFAULT ''"
+            )
+        )
     else:
         cols = conn.execute(text("PRAGMA table_info(uspto_tracker)")).fetchall()
         col_names = {row[1] for row in cols} if cols else set()
@@ -1175,6 +1181,10 @@ def _run_uspto_tracker_migration(conn, backend: str) -> None:
         if "comment" not in col_names:
             conn.execute(
                 text("ALTER TABLE uspto_tracker ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
+            )
+        if "calendar_status" not in col_names:
+            conn.execute(
+                text("ALTER TABLE uspto_tracker ADD COLUMN calendar_status TEXT NOT NULL DEFAULT ''")
             )
 
 
