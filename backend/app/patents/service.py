@@ -1425,79 +1425,116 @@ def update_project(session: Session, project_id: int, payload: PatentProjectUpda
 def update_project_detail(
     session: Session, project_id: int, detail_update: PatentProjectDetailUpdate
 ) -> dict | None:
-    updated = update_project(session, project_id, detail_update.application)
-    if not updated:
-        return None
+    # This endpoint touches PatentProject (via update_project) and then, a
+    # few queries later, PatentStatusEvent - which isn't covered by the
+    # generic audit listener (it only watches PatentProject et al). Letting
+    # the listener run would also fire twice: the SELECTs below autoflush
+    # the project's pending modified_date change before this function's own
+    # final commit does, producing two empty "touched" rows alongside the
+    # real one. So: mark this project explicit (the listener skips it
+    # entirely) and no_autoflush (one flush, at the explicit commit below),
+    # then record one consolidated audit event - PatentProject scalar diff
+    # plus every changed timeline date - ourselves.
+    from app.audit.listener import _scalar_diff  # deferred: avoids a circular import at module load time
 
-    project = session.get(PatentProject, project_id)
-    if not project:
-        return None
+    mark_explicit(session, "patent", project_id)
+    with session.no_autoflush:
+        updated = update_project(session, project_id, detail_update.application)
+        if not updated:
+            return None
 
-    incoming_status_ids = {item.status_id for item in detail_update.timeline_updates}
-    for status_id in incoming_status_ids:
-        if status_id not in ALL_STATUS_IDS:
-            raise ValueError(f"Invalid status id: {status_id}")
+        project = session.get(PatentProject, project_id)
+        if not project:
+            return None
 
-    granted_item = next(
-        (item for item in detail_update.timeline_updates if item.status_id == STATUS_ID_GRANTED),
-        None,
-    )
-    if granted_item and granted_item.status_date and not (project.grant_number or "").strip():
-        raise ValueError("Grant number is required once Grant date is set")
+        changes = _scalar_diff(session, project)
 
-    priorities = session.exec(
-        select(PatentPriority).where(PatentPriority.project_id == project_id)
-    ).all()
-    validate_timeline_updates(
-        [(item.status_id, item.status_date) for item in detail_update.timeline_updates],
-        requires_non_provisional=project.provisional_kind == "OP",
-        in_application_date=project.in_application_date,
-        priority_dates=[p.priority_application_date for p in priorities],
-        is_divisional=(project.application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES,
-        is_patent_of_addition=(project.application_type or "").strip() in PATENT_OF_ADDITION_APPLICATION_TYPES,
-        parent_application_date=project.parent_application_date,
-        parent_priority_dates=_parent_priority_dates(session, project),
-    )
+        incoming_status_ids = {item.status_id for item in detail_update.timeline_updates}
+        for status_id in incoming_status_ids:
+            if status_id not in ALL_STATUS_IDS:
+                raise ValueError(f"Invalid status id: {status_id}")
 
-    existing_events = session.exec(
-        select(PatentStatusEvent).where(PatentStatusEvent.project_id == project_id)
-    ).all()
+        granted_item = next(
+            (item for item in detail_update.timeline_updates if item.status_id == STATUS_ID_GRANTED),
+            None,
+        )
+        if granted_item and granted_item.status_date and not (project.grant_number or "").strip():
+            raise ValueError("Grant number is required once Grant date is set")
 
-    latest_by_status_id: dict[int, PatentStatusEvent] = {}
-    for event in existing_events:
-        if event.status_id not in incoming_status_ids:
-            session.delete(event)
-            continue
-        if event.status_id in latest_by_status_id:
-            session.delete(event)
-            continue
-        latest_by_status_id[event.status_id] = event
+        priorities = session.exec(
+            select(PatentPriority).where(PatentPriority.project_id == project_id)
+        ).all()
+        validate_timeline_updates(
+            [(item.status_id, item.status_date) for item in detail_update.timeline_updates],
+            requires_non_provisional=project.provisional_kind == "OP",
+            in_application_date=project.in_application_date,
+            priority_dates=[p.priority_application_date for p in priorities],
+            is_divisional=(project.application_type or "").strip() in DIVISIONAL_APPLICATION_TYPES,
+            is_patent_of_addition=(project.application_type or "").strip() in PATENT_OF_ADDITION_APPLICATION_TYPES,
+            parent_application_date=project.parent_application_date,
+            parent_priority_dates=_parent_priority_dates(session, project),
+        )
 
-    for item in detail_update.timeline_updates:
-        db_event = latest_by_status_id.get(item.status_id)
-        if db_event:
-            db_event.status_date = item.status_date
-        else:
-            session.add(
-                PatentStatusEvent(
-                    project_id=project_id,
-                    status_id=item.status_id,
-                    status_date=item.status_date,
+        existing_events = session.exec(
+            select(PatentStatusEvent).where(PatentStatusEvent.project_id == project_id)
+        ).all()
+
+        latest_by_status_id: dict[int, PatentStatusEvent] = {}
+        for event in existing_events:
+            if event.status_id not in incoming_status_ids:
+                changes.append(
+                    {"field": status_label(event.status_id), "old": event.status_date.isoformat(), "new": None}
                 )
-            )
+                session.delete(event)
+                continue
+            if event.status_id in latest_by_status_id:
+                session.delete(event)
+                continue
+            latest_by_status_id[event.status_id] = event
 
-    fer_item = next(
-        (item for item in detail_update.timeline_updates if item.status_id == STATUS_ID_FER_ISSUED),
-        None,
-    )
-    if fer_item and fer_item.status_date:
-        upsert_form3_updated_entry(session, project_id, fer_item.status_date)
+        for item in detail_update.timeline_updates:
+            db_event = latest_by_status_id.get(item.status_id)
+            if db_event:
+                if db_event.status_date != item.status_date:
+                    changes.append({
+                        "field": status_label(item.status_id),
+                        "old": db_event.status_date.isoformat(),
+                        "new": item.status_date.isoformat(),
+                    })
+                db_event.status_date = item.status_date
+            else:
+                changes.append(
+                    {"field": status_label(item.status_id), "old": None, "new": item.status_date.isoformat()}
+                )
+                session.add(
+                    PatentStatusEvent(
+                        project_id=project_id,
+                        status_id=item.status_id,
+                        status_date=item.status_date,
+                    )
+                )
 
-    if granted_item and granted_item.status_date:
-        upsert_form27_entry(session, project_id, granted_item.status_date, project.grant_number)
+        fer_item = next(
+            (item for item in detail_update.timeline_updates if item.status_id == STATUS_ID_FER_ISSUED),
+            None,
+        )
+        if fer_item and fer_item.status_date:
+            upsert_form3_updated_entry(session, project_id, fer_item.status_date)
+
+        if granted_item and granted_item.status_date:
+            upsert_form27_entry(session, project_id, granted_item.status_date, project.grant_number)
 
     project.modified_date = datetime.utcnow()
     session.add(project)
+    if changes:
+        write_audit(
+            session,
+            action="update",
+            entity_type="patent",
+            entity_id=project.id,
+            entity_label=project.docket_no,
+            changes=changes,
+        )
     session.commit()
     return _project_to_response(session, project)
 
