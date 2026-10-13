@@ -4,6 +4,7 @@ from sqlmodel import SQLModel, Field
 from pydantic import field_validator
 import re
 
+from app.domain.custom_events import validate_reminder_option
 from app.patents.schemas import PatentAgentSummary, PatentClientSummary
 
 APPLICATION_NUMBER_PATTERN = r"^\d{6}-001$"
@@ -16,6 +17,41 @@ class ReminderRead(SQLModel):
     kind: str
     fire_on: date
     label: str
+
+
+class ProjectNoteRead(SQLModel):
+    id: int
+    note_text: str
+    created_date: datetime
+
+
+class ProjectNoteInput(SQLModel):
+    note_text: str = Field(min_length=1)
+
+
+class CustomEventCreate(SQLModel):
+    event_type: str = Field(min_length=1)
+    event_date: date
+    reminder_option: str = "none"
+
+    @field_validator("reminder_option")
+    @classmethod
+    def validate_reminder(cls, value: str) -> str:
+        return validate_reminder_option(value)
+
+
+class CustomEventRead(SQLModel):
+    id: int
+    event_type: str
+    event_date: date
+    reminder_option: str
+    reminder_date: Optional[date] = None
+    closure_date: Optional[date] = None
+    created_date: datetime
+
+
+class CustomEventClose(SQLModel):
+    closure_date: date
 
 
 def _validate_project_code(value: str) -> str:
@@ -144,6 +180,10 @@ class ProjectDetailRead(SQLModel):
     attorney: Optional[PatentAgentSummary] = None
     application_current_status: str
     comments: Optional[str] = None
+    fer_response_deadline: Optional[date] = None
+    upcoming_reminders: List[ReminderRead] = Field(default_factory=list)
+    notes: List[ProjectNoteRead] = Field(default_factory=list)
+    custom_events: List[CustomEventRead] = Field(default_factory=list)
     timeline: list[ProjectTimelineItem]
 
 

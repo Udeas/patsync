@@ -326,6 +326,38 @@ def _run_postgres_migrations(conn) -> None:
         conn.execute(text('TRUNCATE TABLE "application" RESTART IDENTITY CASCADE'))
 
     _run_postgres_tm_migrations(conn)
+    _run_postgres_design_migrations(conn)
+
+
+def _run_postgres_design_migrations(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS design_project_note (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES application_data(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS design_custom_event (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES application_data(id),
+                event_type VARCHAR NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option VARCHAR NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
 
 
 def _run_postgres_tm_migrations(conn) -> None:
@@ -630,6 +662,7 @@ def _run_sqlite_migrations(conn) -> None:
         conn.execute(text("DELETE FROM application"))
 
     _run_sqlite_tm_migrations(conn)
+    _run_sqlite_design_migrations(conn)
 
 
 def _run_sqlite_tm_migrations(conn) -> None:
@@ -715,6 +748,37 @@ def _run_sqlite_tm_migrations(conn) -> None:
             CREATE TABLE IF NOT EXISTS tm_custom_event (
                 id INTEGER PRIMARY KEY,
                 application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                event_type TEXT NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option TEXT NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+
+
+def _run_sqlite_design_migrations(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS design_project_note (
+                id INTEGER PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES application_data(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS design_custom_event (
+                id INTEGER PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES application_data(id),
                 event_type TEXT NOT NULL,
                 event_date DATE NOT NULL,
                 reminder_option TEXT NOT NULL,

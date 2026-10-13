@@ -57,3 +57,31 @@ class ApplicationState(SQLModel, table=True):
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+
+
+class DesignProjectNote(SQLModel, table=True):
+    __tablename__ = "design_project_note"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: int = Field(nullable=False, foreign_key="application_data.id", index=True)
+    note_text: str = Field(sa_column=Column(Text, nullable=False))
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class DesignCustomEvent(SQLModel, table=True):
+    __tablename__ = "design_custom_event"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    application_id: int = Field(nullable=False, foreign_key="application_data.id", index=True)
+    event_type: str = Field(nullable=False)
+    event_date: date = Field(nullable=False)
+    reminder_option: str = Field(nullable=False)
+    reminder_date: Optional[date] = Field(default=None)
+    closure_date: Optional[date] = Field(default=None)
+    created_date: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )

@@ -7,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, desc, select
 
+from app.domain.custom_events import compute_reminder_date, format_short_date, REMINDER_OPTION_NONE
 from app.domain.patent_timeline import build_timeline_for_application
 from app.domain.status_workflow import (
     enabled_status_ids,
@@ -14,12 +15,17 @@ from app.domain.status_workflow import (
     validate_status_change,
     validate_timeline_updates,
 )
-from app.models.applications import ApplicationData, ApplicationState, Status
+from app.models.applications import ApplicationData, ApplicationState, DesignCustomEvent, DesignProjectNote, Status
 from app.patents.models import PatentAgent, PatentClient
 from app.schemas.applications import (
     ApplicationCreate,
+    CustomEventClose,
+    CustomEventCreate,
+    CustomEventRead,
     ProjectDetailRead,
     ProjectDetailUpdate,
+    ProjectNoteInput,
+    ProjectNoteRead,
     ProjectTimelineItem,
     ApplicationRead,
     ApplicationStatusUpdate,
@@ -185,6 +191,9 @@ def _read_model_with_timeline(
     reminders = [
         ReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
     ]
+    reminders = sorted(
+        reminders + _custom_event_reminders(session, data.id or 0), key=lambda r: (r.fire_on, r.kind)
+    )
     filing_date = tl.filing_date or state.application_date
     client_summary = _resolve_client_summary(session, data.client_id, clients_by_id)
     attorney_summary = _resolve_attorney_summary(session, data.attorney_id, agents_by_id)
@@ -221,6 +230,139 @@ def _filled_status_dates(session: Session, application_num: str) -> dict[int, da
         if not existing or (state.id or 0) > (existing.id or 0):
             by_status_id[state.status_id] = state
     return {sid: st.application_date for sid, st in by_status_id.items()}
+
+
+def _custom_event_reminder_row(row: DesignCustomEvent) -> ReminderRead:
+    return ReminderRead(
+        kind="custom_event",
+        fire_on=row.reminder_date,
+        label=f"{row.event_type} issued on {format_short_date(row.event_date)}",
+    )
+
+
+def _custom_event_reminders(session: Session, application_id: int) -> List[ReminderRead]:
+    rows = session.exec(
+        select(DesignCustomEvent).where(
+            DesignCustomEvent.application_id == application_id,
+            DesignCustomEvent.closure_date.is_(None),
+            DesignCustomEvent.reminder_date.is_not(None),
+        )
+    ).all()
+    return [_custom_event_reminder_row(row) for row in rows]
+
+
+def _project_notes_read(session: Session, application_id: int) -> List[ProjectNoteRead]:
+    rows = session.exec(
+        select(DesignProjectNote)
+        .where(DesignProjectNote.application_id == application_id)
+        .order_by(desc(DesignProjectNote.created_date), desc(DesignProjectNote.id))
+    ).all()
+    return [ProjectNoteRead(id=n.id, note_text=n.note_text, created_date=n.created_date) for n in rows]
+
+
+def add_project_note(
+    session: Session, application_id: int, payload: ProjectNoteInput
+) -> Optional[List[ProjectNoteRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    note_text = payload.note_text.strip()
+    if not note_text:
+        raise ValueError("Note text is required")
+    session.add(DesignProjectNote(application_id=application_id, note_text=note_text))
+    session.commit()
+    return _project_notes_read(session, application_id)
+
+
+def update_project_note(
+    session: Session, application_id: int, note_id: int, payload: ProjectNoteInput
+) -> Optional[List[ProjectNoteRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    note = session.get(DesignProjectNote, note_id)
+    if not note or note.application_id != application_id:
+        return None
+    note_text = payload.note_text.strip()
+    if not note_text:
+        raise ValueError("Note text is required")
+    note.note_text = note_text
+    session.add(note)
+    session.commit()
+    return _project_notes_read(session, application_id)
+
+
+def _custom_events_read(session: Session, application_id: int) -> List[CustomEventRead]:
+    rows = session.exec(
+        select(DesignCustomEvent)
+        .where(DesignCustomEvent.application_id == application_id)
+        .order_by(desc(DesignCustomEvent.event_date), desc(DesignCustomEvent.id))
+    ).all()
+    return [
+        CustomEventRead(
+            id=row.id,
+            event_type=row.event_type,
+            event_date=row.event_date,
+            reminder_option=row.reminder_option,
+            reminder_date=row.reminder_date,
+            closure_date=row.closure_date,
+            created_date=row.created_date,
+        )
+        for row in rows
+    ]
+
+
+def add_custom_event(
+    session: Session, application_id: int, payload: CustomEventCreate
+) -> Optional[List[CustomEventRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    reminder_date = compute_reminder_date(payload.event_date, payload.reminder_option)
+    session.add(
+        DesignCustomEvent(
+            application_id=application_id,
+            event_type=payload.event_type.strip(),
+            event_date=payload.event_date,
+            reminder_option=payload.reminder_option,
+            reminder_date=reminder_date,
+        )
+    )
+    session.commit()
+    return _custom_events_read(session, application_id)
+
+
+def close_custom_event(
+    session: Session, application_id: int, event_id: int, payload: CustomEventClose
+) -> Optional[List[CustomEventRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    event = session.get(DesignCustomEvent, event_id)
+    if not event or event.application_id != application_id:
+        return None
+    if event.closure_date is not None:
+        raise ValueError("Event is already closed")
+    event.closure_date = payload.closure_date
+    session.add(event)
+    session.commit()
+    return _custom_events_read(session, application_id)
+
+
+def delete_custom_event(
+    session: Session, application_id: int, event_id: int
+) -> Optional[List[CustomEventRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    event = session.get(DesignCustomEvent, event_id)
+    if not event or event.application_id != application_id:
+        return None
+    if event.reminder_option != REMINDER_OPTION_NONE or event.closure_date is not None:
+        raise ValueError("Only open, no-reminder events can be deleted")
+    session.delete(event)
+    session.commit()
+    return _custom_events_read(session, application_id)
 
 
 def list_statuses(session: Session) -> List[StatusRead]:
@@ -614,6 +756,10 @@ def get_project_detail(session: Session, application_id: int) -> Optional[Projec
         attorney=app_read.attorney,
         application_current_status=app_read.application_current_status,
         comments=app_read.comments,
+        fer_response_deadline=app_read.fer_response_deadline,
+        upcoming_reminders=app_read.upcoming_reminders,
+        notes=_project_notes_read(session, application_id),
+        custom_events=_custom_events_read(session, application_id),
         timeline=timeline,
     )
 
