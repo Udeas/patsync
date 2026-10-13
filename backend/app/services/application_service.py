@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from datetime import date, datetime
 from typing import DefaultDict, List, Optional, Tuple
@@ -40,6 +41,47 @@ def _touch_last_status_updated(db_application: ApplicationData, when: Optional[d
     ts = when or _utcnow()
     db_application.last_status_updated_at = ts
     db_application.modified_date = ts
+
+
+_DESIGN_PROJECT_CODE_PATTERN = re.compile(r"^DES(\d{4,})$")
+
+
+def _generate_next_project_code(session: Session, client_id: Optional[int]) -> str:
+    """Docket = client_code + sequential number (e.g. ABC01, ABC02, ...),
+    tracked per client_id so numbering never collides or is reused across
+    clients. Falls back to the legacy global DES<4-digit> scheme when no
+    client is selected."""
+    if client_id is None:
+        return _generate_next_legacy_project_code(session)
+
+    client = session.get(PatentClient, client_id)
+    if client is None:
+        raise ValueError("client_id does not reference an existing client")
+
+    return _generate_next_client_project_code(session, client_id, client.client_code)
+
+
+def _generate_next_client_project_code(session: Session, client_id: int, client_code: str) -> str:
+    pattern = re.compile(rf"^{re.escape(client_code)}(\d{{2,}})$")
+    existing_codes = session.exec(
+        select(ApplicationData.project_code).where(ApplicationData.client_id == client_id)
+    ).all()
+    max_num = 0
+    for code in existing_codes:
+        match = pattern.match(code or "")
+        if match:
+            max_num = max(max_num, int(match.group(1)))
+    return f"{client_code}{max_num + 1:02d}"
+
+
+def _generate_next_legacy_project_code(session: Session) -> str:
+    existing_codes = session.exec(select(ApplicationData.project_code)).all()
+    max_num = 0
+    for code in existing_codes:
+        match = _DESIGN_PROJECT_CODE_PATTERN.match(code or "")
+        if match:
+            max_num = max(max_num, int(match.group(1)))
+    return f"DES{max_num + 1:04d}"
 
 
 def _states_ordered_for_app(session: Session, application_num: str) -> List[Tuple[int, date, str]]:
@@ -192,46 +234,53 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
         raise ValueError("status table must contain Application Filed before creating applications")
 
     now = _utcnow()
-    db_application = ApplicationData(
-        project_code=application.project_code,
-        application_num=application.application_number,
-        applicant_name=application.applicant_name,
-        client_id=application.client_id,
-        attorney_id=application.attorney_id,
-        client_docket_no=application.client_docket_no,
-        applicant_address=application.applicant_address,
-        application_title=application.application_title,
-        comments=application.comments,
-        created_date=now,
-        modified_date=now,
-    )
+    last_error: Optional[IntegrityError] = None
 
-    try:
-        session.add(db_application)
-        session.flush()
-
-        db_state = ApplicationState(
+    for _ in range(5):
+        db_application = ApplicationData(
+            project_code=_generate_next_project_code(session, application.client_id),
             application_num=application.application_number,
-            status_id=STATUS_ID_APPLICATION_FILED,
-            application_date=application.application_date,
+            applicant_name=application.applicant_name,
+            client_id=application.client_id,
+            attorney_id=application.attorney_id,
+            client_docket_no=application.client_docket_no,
+            applicant_address=application.applicant_address,
+            application_title=application.application_title,
+            comments=application.comments,
             created_date=now,
             modified_date=now,
         )
-        session.add(db_state)
-        _touch_last_status_updated(db_application, now)
-        session.commit()
-        session.refresh(db_application)
-        session.refresh(db_state)
-    except IntegrityError as exc:
-        session.rollback()
-        msg = str(exc).lower()
-        if "project_code" in msg:
-            raise ValueError("project_code already exists") from exc
-        raise ValueError("application_number already exists or violates constraints") from exc
 
-    today = date.today()
-    states = [(db_state.id or 0, db_state.application_date, status_row.status)]
-    return _read_model_with_timeline(session, db_application, db_state, status_row, states, today)
+        try:
+            session.add(db_application)
+            session.flush()
+
+            db_state = ApplicationState(
+                application_num=application.application_number,
+                status_id=STATUS_ID_APPLICATION_FILED,
+                application_date=application.application_date,
+                created_date=now,
+                modified_date=now,
+            )
+            session.add(db_state)
+            _touch_last_status_updated(db_application, now)
+            session.commit()
+            session.refresh(db_application)
+            session.refresh(db_state)
+        except IntegrityError as exc:
+            session.rollback()
+            msg = str(exc).lower()
+            if "project_code" in msg:
+                # Auto-generated code collided with a concurrent create - regenerate and retry.
+                last_error = exc
+                continue
+            raise ValueError("application_number already exists or violates constraints") from exc
+
+        today = date.today()
+        states = [(db_state.id or 0, db_state.application_date, status_row.status)]
+        return _read_model_with_timeline(session, db_application, db_state, status_row, states, today)
+
+    raise ValueError("Unable to generate a unique project code, please retry.") from last_error
 
 
 def get_applications(session: Session) -> List[ApplicationRead]:

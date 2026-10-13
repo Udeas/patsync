@@ -25,7 +25,8 @@ def _validate_project_code(value: str) -> str:
 
 
 class ApplicationCreate(SQLModel):
-    project_code: str = Field(min_length=1, max_length=64)
+    # project_code is system-generated at creation and immutable thereafter -
+    # intentionally not accepted here.
     application_number: str = Field(min_length=10, max_length=10)
     application_date: date
     applicant_name: str = Field(min_length=1)
@@ -42,11 +43,6 @@ class ApplicationCreate(SQLModel):
         if not re.fullmatch(APPLICATION_NUMBER_PATTERN, value):
             raise ValueError("application_number must match format xxxxxx-001")
         return value
-
-    @field_validator("project_code")
-    @classmethod
-    def validate_create_project_code(cls, value: str) -> str:
-        return _validate_project_code(value)
 
 
 class ApplicationRead(SQLModel):
