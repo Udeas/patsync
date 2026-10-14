@@ -5,7 +5,13 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
-from app.us_pto.auth.token_store import NeedsAuthorizationError, load_token_json, save_token_json
+from app.us_pto.auth.token_store import (
+    NeedsAuthorizationError,
+    load_token_json,
+    pop_pkce_verifier,
+    save_pkce_verifier,
+    save_token_json,
+)
 from app.us_pto.config import CALENDAR_SCOPES, GOOGLE_CREDS_FILE
 
 PROVIDER = "calendar"
@@ -30,13 +36,19 @@ def get_calendar_service():
 
 def build_authorize_url(redirect_uri: str) -> str:
     flow = Flow.from_client_secrets_file(GOOGLE_CREDS_FILE, scopes=CALENDAR_SCOPES, redirect_uri=redirect_uri)
-    auth_url, _state = flow.authorization_url(
+    auth_url, state = flow.authorization_url(
         access_type="offline", include_granted_scopes="true", prompt="consent"
     )
+    save_pkce_verifier(state, flow.code_verifier)
     return auth_url
 
 
-def exchange_code(code: str, redirect_uri: str) -> None:
-    flow = Flow.from_client_secrets_file(GOOGLE_CREDS_FILE, scopes=CALENDAR_SCOPES, redirect_uri=redirect_uri)
+def exchange_code(code: str, redirect_uri: str, state: str) -> None:
+    code_verifier = pop_pkce_verifier(state)
+    if not code_verifier:
+        raise ValueError(f"no PKCE verifier found for state {state!r} - authorize again")
+    flow = Flow.from_client_secrets_file(
+        GOOGLE_CREDS_FILE, scopes=CALENDAR_SCOPES, redirect_uri=redirect_uri, code_verifier=code_verifier
+    )
     flow.fetch_token(code=code)
     save_token_json(PROVIDER, flow.credentials.to_json())

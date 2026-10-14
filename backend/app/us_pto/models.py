@@ -36,6 +36,21 @@ class GoogleOAuthToken(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class OAuthPkceVerifier(SQLModel, table=True):
+    """The PKCE code_verifier google-auth-oauthlib's Flow auto-generates when
+    building the authorize URL, keyed by the OAuth `state` param so the
+    callback - a separate request, with its own fresh Flow instance - can
+    retrieve the matching verifier before exchanging the code. Single-use:
+    popped (read + deleted) on success."""
+
+    __tablename__ = "oauth_pkce_verifier"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    state: str = Field(max_length=128, unique=True, index=True)
+    code_verifier: str = Field(max_length=256)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class DocCodeRule(SQLModel, table=True):
     __tablename__ = "doc_code_rules"
 

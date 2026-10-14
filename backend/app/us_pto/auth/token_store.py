@@ -13,7 +13,7 @@ from datetime import datetime
 from sqlmodel import Session, select
 
 from app.us_pto.database import get_us_pto_engine
-from app.us_pto.models import GoogleOAuthToken
+from app.us_pto.models import GoogleOAuthToken, OAuthPkceVerifier
 
 
 class NeedsAuthorizationError(Exception):
@@ -41,3 +41,20 @@ def save_token_json(provider: str, token_json: str) -> None:
             row = GoogleOAuthToken(provider=provider, token_json=token_json)
         session.add(row)
         session.commit()
+
+
+def save_pkce_verifier(state: str, code_verifier: str) -> None:
+    with Session(get_us_pto_engine()) as session:
+        session.add(OAuthPkceVerifier(state=state, code_verifier=code_verifier))
+        session.commit()
+
+
+def pop_pkce_verifier(state: str) -> str | None:
+    with Session(get_us_pto_engine()) as session:
+        row = session.exec(select(OAuthPkceVerifier).where(OAuthPkceVerifier.state == state)).first()
+        if not row:
+            return None
+        code_verifier = row.code_verifier
+        session.delete(row)
+        session.commit()
+        return code_verifier

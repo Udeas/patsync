@@ -2,7 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel
 from app import models  # noqa: F401
-from app.us_pto.models import GoogleOAuthToken, UsptoTracker  # noqa: F401
+from app.us_pto.models import GoogleOAuthToken, OAuthPkceVerifier, UsptoTracker  # noqa: F401
 from app.auth.models import User  # noqa: F401
 from app.database import engine, run_schema_migrations
 from app.audit.listener import register_audit_listener

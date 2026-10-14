@@ -8,8 +8,13 @@ from sqlmodel import SQLModel
 
 from app.database import engine
 from app.us_pto.auth import gmail as gmail_auth
-from app.us_pto.auth.token_store import NeedsAuthorizationError, load_token_json, save_token_json
-from app.us_pto.models import GoogleOAuthToken  # noqa: F401
+from app.us_pto.auth.token_store import (
+    NeedsAuthorizationError,
+    load_token_json,
+    save_pkce_verifier,
+    save_token_json,
+)
+from app.us_pto.models import GoogleOAuthToken, OAuthPkceVerifier  # noqa: F401
 
 
 def setup_function() -> None:
@@ -57,26 +62,36 @@ def test_raises_needs_authorization_when_invalid_and_no_refresh_token() -> None:
 
 
 def test_exchange_code_persists_credentials_from_flow() -> None:
+    save_pkce_verifier("state123", "saved-verifier")
     fake_flow = MagicMock()
     fake_flow.credentials.to_json.return_value = '{"token": "exchanged"}'
 
     with patch.object(gmail_auth.Flow, "from_client_secrets_file", return_value=fake_flow) as from_secrets:
-        gmail_auth.exchange_code("the-code", "https://example.com/callback")
+        gmail_auth.exchange_code("the-code", "https://example.com/callback", "state123")
 
     fake_flow.fetch_token.assert_called_once_with(code="the-code")
     from_secrets.assert_called_once_with(
         gmail_auth.GOOGLE_CREDS_FILE,
         scopes=gmail_auth.GMAIL_SCOPES,
         redirect_uri="https://example.com/callback",
+        code_verifier="saved-verifier",
     )
     assert load_token_json(gmail_auth.PROVIDER) == '{"token": "exchanged"}'
 
 
-def test_build_authorize_url_returns_flow_url() -> None:
-    fake_flow = MagicMock()
+def test_exchange_code_raises_when_state_has_no_saved_verifier() -> None:
+    with pytest.raises(ValueError, match="state"):
+        gmail_auth.exchange_code("the-code", "https://example.com/callback", "never-saved-state")
+
+
+def test_build_authorize_url_returns_flow_url_and_persists_verifier() -> None:
+    fake_flow = MagicMock(code_verifier="the-verifier")
     fake_flow.authorization_url.return_value = ("https://accounts.google.com/auth?...", "state123")
 
     with patch.object(gmail_auth.Flow, "from_client_secrets_file", return_value=fake_flow):
         url = gmail_auth.build_authorize_url("https://example.com/callback")
 
     assert url == "https://accounts.google.com/auth?..."
+    from app.us_pto.auth.token_store import pop_pkce_verifier
+
+    assert pop_pkce_verifier("state123") == "the-verifier"

@@ -24,18 +24,18 @@ _FAILURE_HTML = "<p>{label} authorization failed: {error}. Close this tab and tr
 
 
 @router.get("/automation/step-2/oauth/callback")
-def calendar_oauth_callback(request: Request, code: str = Query(...)):
+def calendar_oauth_callback(request: Request, code: str = Query(...), state: str = Query(...)):
     try:
-        exchange_calendar_code(code, calendar_redirect_uri(request))
+        exchange_calendar_code(code, calendar_redirect_uri(request), state)
     except Exception as exc:
         return HTMLResponse(_FAILURE_HTML.format(label="Calendar", error=exc), status_code=400)
     return HTMLResponse(_SUCCESS_HTML.format(label="Calendar"))
 
 
 @router.get("/automation/step-3/oauth/callback")
-def gmail_oauth_callback(request: Request, code: str = Query(...)):
+def gmail_oauth_callback(request: Request, code: str = Query(...), state: str = Query(...)):
     try:
-        exchange_gmail_code(code, gmail_redirect_uri(request))
+        exchange_gmail_code(code, gmail_redirect_uri(request), state)
     except Exception as exc:
         return HTMLResponse(_FAILURE_HTML.format(label="Gmail", error=exc), status_code=400)
     return HTMLResponse(_SUCCESS_HTML.format(label="Gmail"))
