@@ -27,6 +27,15 @@ class UsptoTracker(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class GoogleOAuthToken(SQLModel, table=True):
+    __tablename__ = "google_oauth_token"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    provider: str = Field(max_length=32, unique=True, index=True)
+    token_json: str = Field(default="")
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class DocCodeRule(SQLModel, table=True):
     __tablename__ = "doc_code_rules"
 

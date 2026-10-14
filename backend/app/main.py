@@ -2,7 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel
 from app import models  # noqa: F401
-from app.us_pto.models import UsptoTracker  # noqa: F401
+from app.us_pto.models import GoogleOAuthToken, UsptoTracker  # noqa: F401
 from app.auth.models import User  # noqa: F401
 from app.database import engine, run_schema_migrations
 from app.audit.listener import register_audit_listener
@@ -13,6 +13,7 @@ from app.routers.trademark import router as trademark_router
 from app.routers.tm_status import router as tm_status_router
 from app.patents.router import router as patents_router
 from app.us_pto.router import router as us_pto_router
+from app.us_pto.oauth_router import router as us_pto_oauth_router
 from app.audit.router import router as audit_router
 from app.auth.router import router as auth_router
 from app.auth.deps import get_current_user, require_admin
@@ -50,6 +51,7 @@ app.include_router(status_router, prefix="/api/status", dependencies=_auth)
 app.include_router(trademark_router, prefix="/api/tm-applications", dependencies=_auth)
 app.include_router(tm_status_router, prefix="/api/tm-status", dependencies=_auth)
 app.include_router(patents_router, prefix="/api/patents", dependencies=_auth)
+app.include_router(us_pto_oauth_router, prefix="/api/us-pto", tags=["us-pto-oauth"])
 app.include_router(us_pto_router, prefix="/api/us-pto", tags=["us-pto"], dependencies=_auth)
 app.include_router(audit_router, prefix="/api/audit", tags=["audit"], dependencies=[Depends(require_admin)])
 

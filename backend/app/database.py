@@ -1294,6 +1294,40 @@ def _run_doc_code_rules_migration(conn, backend: str) -> None:
     )
 
 
+def _run_google_oauth_token_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS google_oauth_token (
+                    id SERIAL PRIMARY KEY,
+                    provider VARCHAR(32) NOT NULL,
+                    token_json TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_google_oauth_token_provider UNIQUE (provider)
+                );
+                """
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS google_oauth_token (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    token_json TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE (provider)
+                );
+                """
+            )
+        )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_google_oauth_token_provider ON google_oauth_token (provider)")
+    )
+
+
 def _run_users_migration(conn, backend: str) -> None:
     if backend == "postgresql":
         conn.execute(
@@ -1398,6 +1432,7 @@ def run_schema_migrations():
         _run_patent_metadata_migrations(conn, backend)
         _run_uspto_tracker_migration(conn, backend)
         _run_doc_code_rules_migration(conn, backend)
+        _run_google_oauth_token_migration(conn, backend)
         _run_users_migration(conn, backend)
         _run_audit_migration(conn, backend)
         _seed_patent_statuses(conn, backend)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 import threading
 
@@ -50,8 +50,12 @@ from app.us_pto.steps.email_drafts import (
     get_master_file_lock_status as get_step3_lock_status,
 )
 from app.us_pto.steps.fetch_email import run_fetch_for_ui
+from app.us_pto.auth.calendar import build_authorize_url as build_calendar_authorize_url
 from app.us_pto.auth.calendar import get_calendar_service
+from app.us_pto.auth.gmail import build_authorize_url as build_gmail_authorize_url
 from app.us_pto.auth.gmail import get_gmail_service
+from app.us_pto.auth.oauth_redirect import calendar_redirect_uri, gmail_redirect_uri
+from app.us_pto.auth.token_store import NeedsAuthorizationError
 
 router = APIRouter()
 
@@ -282,10 +286,15 @@ def get_job_status(job_id: str):
 
 
 @router.post("/automation/step-2/authorize")
-def authorize_step_2():
+def authorize_step_2(request: Request):
     try:
         get_calendar_service()
         return {"status": "success", "message": "Calendar authorization successful."}
+    except NeedsAuthorizationError:
+        return {
+            "status": "authorize_required",
+            "authorize_url": build_calendar_authorize_url(calendar_redirect_uri(request)),
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -313,10 +322,15 @@ def step_2_create(body: DuplicateModeRequest):
 
 
 @router.post("/automation/step-3/authorize")
-def authorize_step_3():
+def authorize_step_3(request: Request):
     try:
         get_gmail_service()
         return {"status": "success", "message": "Gmail authorization successful."}
+    except NeedsAuthorizationError:
+        return {
+            "status": "authorize_required",
+            "authorize_url": build_gmail_authorize_url(gmail_redirect_uri(request)),
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
