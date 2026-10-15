@@ -1,6 +1,7 @@
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, Session
 from app import models  # noqa: F401
 from app.us_pto.models import GoogleOAuthToken, OAuthPkceVerifier, UsptoTracker  # noqa: F401
 from app.auth.models import User  # noqa: F401
@@ -56,6 +57,16 @@ app.include_router(us_pto_router, prefix="/api/us-pto", tags=["us-pto"], depende
 app.include_router(audit_router, prefix="/api/audit", tags=["audit"], dependencies=[Depends(require_admin)])
 
 
+_scheduler = BackgroundScheduler()
+
+
+def _run_hearing_followup_job() -> None:
+    from app.patents.service import process_overdue_hearings
+
+    with Session(engine) as session:
+        process_overdue_hearings(session)
+
+
 @app.on_event("startup")
 def on_startup():
     # Create model-defined tables first so raw migrations that ALTER or
@@ -63,6 +74,21 @@ def on_startup():
     SQLModel.metadata.create_all(engine)
     run_schema_migrations()
     _seed_admin_on_startup()
+
+    _scheduler.add_job(
+        _run_hearing_followup_job,
+        "cron",
+        hour=1,
+        minute=0,
+        id="patent_hearing_followup",
+        replace_existing=True,
+    )
+    _scheduler.start()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    _scheduler.shutdown(wait=False)
 
 
 def _seed_admin_on_startup() -> None:
