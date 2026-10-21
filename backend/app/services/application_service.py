@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from datetime import date, datetime
 from typing import DefaultDict, List, Optional, Tuple
@@ -6,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, desc, select
 
+from app.domain.custom_events import compute_reminder_date, format_short_date, REMINDER_OPTION_NONE
 from app.domain.patent_timeline import build_timeline_for_application
 from app.domain.status_workflow import (
     enabled_status_ids,
@@ -13,12 +15,17 @@ from app.domain.status_workflow import (
     validate_status_change,
     validate_timeline_updates,
 )
-from app.models.applications import ApplicationData, ApplicationState, Status
+from app.models.applications import ApplicationData, ApplicationState, DesignCustomEvent, DesignProjectNote, Status
 from app.patents.models import PatentAgent, PatentClient
 from app.schemas.applications import (
     ApplicationCreate,
+    CustomEventClose,
+    CustomEventCreate,
+    CustomEventRead,
     ProjectDetailRead,
     ProjectDetailUpdate,
+    ProjectNoteInput,
+    ProjectNoteRead,
     ProjectTimelineItem,
     ApplicationRead,
     ApplicationStatusUpdate,
@@ -40,6 +47,47 @@ def _touch_last_status_updated(db_application: ApplicationData, when: Optional[d
     ts = when or _utcnow()
     db_application.last_status_updated_at = ts
     db_application.modified_date = ts
+
+
+_DESIGN_PROJECT_CODE_PATTERN = re.compile(r"^DES(\d{4,})$")
+
+
+def _generate_next_project_code(session: Session, client_id: Optional[int]) -> str:
+    """Docket = client_code + sequential number (e.g. ABC01, ABC02, ...),
+    tracked per client_id so numbering never collides or is reused across
+    clients. Falls back to the legacy global DES<4-digit> scheme when no
+    client is selected."""
+    if client_id is None:
+        return _generate_next_legacy_project_code(session)
+
+    client = session.get(PatentClient, client_id)
+    if client is None:
+        raise ValueError("client_id does not reference an existing client")
+
+    return _generate_next_client_project_code(session, client_id, client.client_code)
+
+
+def _generate_next_client_project_code(session: Session, client_id: int, client_code: str) -> str:
+    pattern = re.compile(rf"^{re.escape(client_code)}(\d{{2,}})$")
+    existing_codes = session.exec(
+        select(ApplicationData.project_code).where(ApplicationData.client_id == client_id)
+    ).all()
+    max_num = 0
+    for code in existing_codes:
+        match = pattern.match(code or "")
+        if match:
+            max_num = max(max_num, int(match.group(1)))
+    return f"{client_code}{max_num + 1:02d}"
+
+
+def _generate_next_legacy_project_code(session: Session) -> str:
+    existing_codes = session.exec(select(ApplicationData.project_code)).all()
+    max_num = 0
+    for code in existing_codes:
+        match = _DESIGN_PROJECT_CODE_PATTERN.match(code or "")
+        if match:
+            max_num = max(max_num, int(match.group(1)))
+    return f"DES{max_num + 1:04d}"
 
 
 def _states_ordered_for_app(session: Session, application_num: str) -> List[Tuple[int, date, str]]:
@@ -143,6 +191,9 @@ def _read_model_with_timeline(
     reminders = [
         ReminderRead(kind=r.kind, fire_on=r.fire_on, label=r.label) for r in tl.upcoming_reminders
     ]
+    reminders = sorted(
+        reminders + _custom_event_reminders(session, data.id or 0), key=lambda r: (r.fire_on, r.kind)
+    )
     filing_date = tl.filing_date or state.application_date
     client_summary = _resolve_client_summary(session, data.client_id, clients_by_id)
     attorney_summary = _resolve_attorney_summary(session, data.attorney_id, agents_by_id)
@@ -181,6 +232,139 @@ def _filled_status_dates(session: Session, application_num: str) -> dict[int, da
     return {sid: st.application_date for sid, st in by_status_id.items()}
 
 
+def _custom_event_reminder_row(row: DesignCustomEvent) -> ReminderRead:
+    return ReminderRead(
+        kind="custom_event",
+        fire_on=row.reminder_date,
+        label=f"{row.event_type} issued on {format_short_date(row.event_date)}",
+    )
+
+
+def _custom_event_reminders(session: Session, application_id: int) -> List[ReminderRead]:
+    rows = session.exec(
+        select(DesignCustomEvent).where(
+            DesignCustomEvent.application_id == application_id,
+            DesignCustomEvent.closure_date.is_(None),
+            DesignCustomEvent.reminder_date.is_not(None),
+        )
+    ).all()
+    return [_custom_event_reminder_row(row) for row in rows]
+
+
+def _project_notes_read(session: Session, application_id: int) -> List[ProjectNoteRead]:
+    rows = session.exec(
+        select(DesignProjectNote)
+        .where(DesignProjectNote.application_id == application_id)
+        .order_by(desc(DesignProjectNote.created_date), desc(DesignProjectNote.id))
+    ).all()
+    return [ProjectNoteRead(id=n.id, note_text=n.note_text, created_date=n.created_date) for n in rows]
+
+
+def add_project_note(
+    session: Session, application_id: int, payload: ProjectNoteInput
+) -> Optional[List[ProjectNoteRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    note_text = payload.note_text.strip()
+    if not note_text:
+        raise ValueError("Note text is required")
+    session.add(DesignProjectNote(application_id=application_id, note_text=note_text))
+    session.commit()
+    return _project_notes_read(session, application_id)
+
+
+def update_project_note(
+    session: Session, application_id: int, note_id: int, payload: ProjectNoteInput
+) -> Optional[List[ProjectNoteRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    note = session.get(DesignProjectNote, note_id)
+    if not note or note.application_id != application_id:
+        return None
+    note_text = payload.note_text.strip()
+    if not note_text:
+        raise ValueError("Note text is required")
+    note.note_text = note_text
+    session.add(note)
+    session.commit()
+    return _project_notes_read(session, application_id)
+
+
+def _custom_events_read(session: Session, application_id: int) -> List[CustomEventRead]:
+    rows = session.exec(
+        select(DesignCustomEvent)
+        .where(DesignCustomEvent.application_id == application_id)
+        .order_by(desc(DesignCustomEvent.event_date), desc(DesignCustomEvent.id))
+    ).all()
+    return [
+        CustomEventRead(
+            id=row.id,
+            event_type=row.event_type,
+            event_date=row.event_date,
+            reminder_option=row.reminder_option,
+            reminder_date=row.reminder_date,
+            closure_date=row.closure_date,
+            created_date=row.created_date,
+        )
+        for row in rows
+    ]
+
+
+def add_custom_event(
+    session: Session, application_id: int, payload: CustomEventCreate
+) -> Optional[List[CustomEventRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    reminder_date = compute_reminder_date(payload.event_date, payload.reminder_option)
+    session.add(
+        DesignCustomEvent(
+            application_id=application_id,
+            event_type=payload.event_type.strip(),
+            event_date=payload.event_date,
+            reminder_option=payload.reminder_option,
+            reminder_date=reminder_date,
+        )
+    )
+    session.commit()
+    return _custom_events_read(session, application_id)
+
+
+def close_custom_event(
+    session: Session, application_id: int, event_id: int, payload: CustomEventClose
+) -> Optional[List[CustomEventRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    event = session.get(DesignCustomEvent, event_id)
+    if not event or event.application_id != application_id:
+        return None
+    if event.closure_date is not None:
+        raise ValueError("Event is already closed")
+    event.closure_date = payload.closure_date
+    session.add(event)
+    session.commit()
+    return _custom_events_read(session, application_id)
+
+
+def delete_custom_event(
+    session: Session, application_id: int, event_id: int
+) -> Optional[List[CustomEventRead]]:
+    application = session.get(ApplicationData, application_id)
+    if not application:
+        return None
+    event = session.get(DesignCustomEvent, event_id)
+    if not event or event.application_id != application_id:
+        return None
+    if event.reminder_option != REMINDER_OPTION_NONE or event.closure_date is not None:
+        raise ValueError("Only open, no-reminder events can be deleted")
+    session.delete(event)
+    session.commit()
+    return _custom_events_read(session, application_id)
+
+
 def list_statuses(session: Session) -> List[StatusRead]:
     rows = session.exec(select(Status).order_by(Status.id)).all()
     return [StatusRead(id=row.id or 0, status=row.status) for row in rows]
@@ -192,46 +376,53 @@ def create_application(session: Session, application: ApplicationCreate) -> Appl
         raise ValueError("status table must contain Application Filed before creating applications")
 
     now = _utcnow()
-    db_application = ApplicationData(
-        project_code=application.project_code,
-        application_num=application.application_number,
-        applicant_name=application.applicant_name,
-        client_id=application.client_id,
-        attorney_id=application.attorney_id,
-        client_docket_no=application.client_docket_no,
-        applicant_address=application.applicant_address,
-        application_title=application.application_title,
-        comments=application.comments,
-        created_date=now,
-        modified_date=now,
-    )
+    last_error: Optional[IntegrityError] = None
 
-    try:
-        session.add(db_application)
-        session.flush()
-
-        db_state = ApplicationState(
+    for _ in range(5):
+        db_application = ApplicationData(
+            project_code=_generate_next_project_code(session, application.client_id),
             application_num=application.application_number,
-            status_id=STATUS_ID_APPLICATION_FILED,
-            application_date=application.application_date,
+            applicant_name=application.applicant_name,
+            client_id=application.client_id,
+            attorney_id=application.attorney_id,
+            client_docket_no=application.client_docket_no,
+            applicant_address=application.applicant_address,
+            application_title=application.application_title,
+            comments=application.comments,
             created_date=now,
             modified_date=now,
         )
-        session.add(db_state)
-        _touch_last_status_updated(db_application, now)
-        session.commit()
-        session.refresh(db_application)
-        session.refresh(db_state)
-    except IntegrityError as exc:
-        session.rollback()
-        msg = str(exc).lower()
-        if "project_code" in msg:
-            raise ValueError("project_code already exists") from exc
-        raise ValueError("application_number already exists or violates constraints") from exc
 
-    today = date.today()
-    states = [(db_state.id or 0, db_state.application_date, status_row.status)]
-    return _read_model_with_timeline(session, db_application, db_state, status_row, states, today)
+        try:
+            session.add(db_application)
+            session.flush()
+
+            db_state = ApplicationState(
+                application_num=application.application_number,
+                status_id=STATUS_ID_APPLICATION_FILED,
+                application_date=application.application_date,
+                created_date=now,
+                modified_date=now,
+            )
+            session.add(db_state)
+            _touch_last_status_updated(db_application, now)
+            session.commit()
+            session.refresh(db_application)
+            session.refresh(db_state)
+        except IntegrityError as exc:
+            session.rollback()
+            msg = str(exc).lower()
+            if "project_code" in msg:
+                # Auto-generated code collided with a concurrent create - regenerate and retry.
+                last_error = exc
+                continue
+            raise ValueError("application_number already exists or violates constraints") from exc
+
+        today = date.today()
+        states = [(db_state.id or 0, db_state.application_date, status_row.status)]
+        return _read_model_with_timeline(session, db_application, db_state, status_row, states, today)
+
+    raise ValueError("Unable to generate a unique project code, please retry.") from last_error
 
 
 def get_applications(session: Session) -> List[ApplicationRead]:
@@ -565,6 +756,10 @@ def get_project_detail(session: Session, application_id: int) -> Optional[Projec
         attorney=app_read.attorney,
         application_current_status=app_read.application_current_status,
         comments=app_read.comments,
+        fer_response_deadline=app_read.fer_response_deadline,
+        upcoming_reminders=app_read.upcoming_reminders,
+        notes=_project_notes_read(session, application_id),
+        custom_events=_custom_events_read(session, application_id),
         timeline=timeline,
     )
 

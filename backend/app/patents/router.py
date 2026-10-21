@@ -49,6 +49,7 @@ from .service import (
     list_patent_agents,
     list_patent_clients,
     list_projects,
+    process_overdue_hearings,
     record_annuity_payment,
     update_project,
     update_project_detail,
@@ -285,6 +286,16 @@ def close_patent_docket_entry_endpoint(
     if entries is None:
         raise HTTPException(status_code=404, detail="Patent docket entry not found")
     return entries
+
+
+@router.post("/jobs/hearing-followup/run")
+def run_hearing_followup_job_endpoint(session: Session = Depends(get_session)):
+    """Manual/on-demand trigger for the daily overdue-hearing sweep that
+    normally runs on the in-process scheduler (see app/main.py). Lets ops
+    force a re-run, and is how this feature is verified without waiting
+    for the scheduled hour."""
+    created = process_overdue_hearings(session)
+    return {"written_submission_entries_created": created}
 
 
 @router.get("/clients", response_model=list[PatentClientRead])

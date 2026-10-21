@@ -26,7 +26,6 @@ def test_create_and_update_persists_client_docket_no() -> None:
         created = create_application(
             session,
             ApplicationCreate(
-                project_code="DSGN1",
                 application_number="123456-001",
                 application_date=date(2024, 1, 1),
                 applicant_name="Acme",

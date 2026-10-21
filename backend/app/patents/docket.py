@@ -29,7 +29,7 @@ choice, not a legal exemption.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from .reminders import add_months
 
@@ -230,4 +230,37 @@ def plan_form27_next_entry(
         title=_form27_title(block_start, block_end),
         rule_reference=FORM27_RULE_REFERENCE,
         due_date=due_date,
+    )
+
+
+# --- Written Submission (post-hearing follow-up) -------------------------
+#
+# Not a statutory filing-formality item like the ones above - this is a
+# practice-management follow-up the firm wants tracked automatically once a
+# hearing date has passed: the attorney typically has to file a written
+# submission within about 15 days of the hearing. Keyed by the triggering
+# PatentStatusEvent.id (not just the project) so a project that goes
+# through more than one hearing over its life gets one tracked item per
+# hearing, without colliding on the (project_id, item_type) uniqueness.
+
+WRITTEN_SUBMISSION_ITEM_PREFIX = "written_submission_"
+WRITTEN_SUBMISSION_FOLLOWUP_DAYS = 15
+WRITTEN_SUBMISSION_TITLE = "Written Submission"
+
+
+def written_submission_item_type(hearing_status_event_id: int) -> str:
+    return f"{WRITTEN_SUBMISSION_ITEM_PREFIX}{hearing_status_event_id}"
+
+
+def plan_written_submission_entry(
+    *, hearing_status_event_id: int, hearing_date: date
+) -> DocketEntryPlan:
+    """Triggered by the daily overdue-hearing sweep once a hearing's date
+    has passed without a follow-up already tracked."""
+    return DocketEntryPlan(
+        item_type=written_submission_item_type(hearing_status_event_id),
+        title=WRITTEN_SUBMISSION_TITLE,
+        rule_reference="Post-hearing follow-up (internal target)",
+        due_date=hearing_date + timedelta(days=WRITTEN_SUBMISSION_FOLLOWUP_DAYS),
+        is_internal_target=True,
     )

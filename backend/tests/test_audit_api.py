@@ -53,6 +53,79 @@ def test_requires_admin() -> None:
         app.dependency_overrides[get_session] = prior
 
 
+def _seed_search_rows():
+    with Session(engine) as session:
+        session.add(AuditLog(created_at=datetime.utcnow(), actor_username="rahul",
+                             action="status_change", entity_type="patent", entity_id=3, entity_label="PA9999",
+                             changes='[{"field":"status","old":"Pending","new":"Granted"}]'))
+        session.add(AuditLog(created_at=datetime.utcnow(), actor_username="priya",
+                             action="update", entity_type="trademark", entity_id=4, entity_label="TM0001",
+                             changes='[{"field":"tm_name","old":"Old Co","new":"New Co"}]'))
+        session.commit()
+
+
+def test_free_text_search_matches_label_and_changes() -> None:
+    prior = app.dependency_overrides.get(get_session)
+    app.dependency_overrides[get_session] = _override
+    _seed_search_rows()
+    app.dependency_overrides[require_admin] = lambda: _admin
+    client = TestClient(app)
+
+    by_label = client.get("/api/audit", params={"q": "PA9999"}).json()
+    assert all(i["entity_label"] == "PA9999" for i in by_label["items"])
+    assert by_label["total"] >= 1
+
+    by_change_value = client.get("/api/audit", params={"q": "granted"}).json()
+    assert any(i["entity_label"] == "PA9999" for i in by_change_value["items"])
+
+    app.dependency_overrides.pop(require_admin, None)
+    if prior is None:
+        app.dependency_overrides.pop(get_session, None)
+    else:
+        app.dependency_overrides[get_session] = prior
+
+
+def test_project_and_field_filters() -> None:
+    prior = app.dependency_overrides.get(get_session)
+    app.dependency_overrides[get_session] = _override
+    _seed_search_rows()
+    app.dependency_overrides[require_admin] = lambda: _admin
+    client = TestClient(app)
+
+    by_project = client.get("/api/audit", params={"project": "tm0001"}).json()
+    assert all(i["entity_label"] == "TM0001" for i in by_project["items"])
+    assert by_project["total"] >= 1
+
+    by_field = client.get("/api/audit", params={"field": "tm_name"}).json()
+    assert all(
+        any(c["field"] == "tm_name" for c in i["changes"]) for i in by_field["items"]
+    )
+
+    app.dependency_overrides.pop(require_admin, None)
+    if prior is None:
+        app.dependency_overrides.pop(get_session, None)
+    else:
+        app.dependency_overrides[get_session] = prior
+
+
+def test_sort_dir_asc_reverses_order() -> None:
+    prior = app.dependency_overrides.get(get_session)
+    app.dependency_overrides[get_session] = _override
+    _seed_rows()
+    app.dependency_overrides[require_admin] = lambda: _admin
+    client = TestClient(app)
+
+    resp = client.get("/api/audit", params={"sort_dir": "asc"})
+    items = resp.json()["items"]
+    assert items[0]["id"] < items[-1]["id"]
+
+    app.dependency_overrides.pop(require_admin, None)
+    if prior is None:
+        app.dependency_overrides.pop(get_session, None)
+    else:
+        app.dependency_overrides[get_session] = prior
+
+
 def test_lists_newest_first_and_filters() -> None:
     prior = app.dependency_overrides.get(get_session)
     app.dependency_overrides[get_session] = _override

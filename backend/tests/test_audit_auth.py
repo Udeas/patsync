@@ -54,3 +54,46 @@ def test_failed_login_writes_audit() -> None:
         assert len(rows) >= 1
         assert rows[-1].actor_username == "admin"
         assert rows[-1].actor_user_id is None
+
+
+def test_authenticated_mutation_is_attributed_to_actor_not_just_login() -> None:
+    # Regression test: get_current_user/require_admin used to be plain `def`
+    # dependencies, which FastAPI dispatches through a threadpool hop with its
+    # own copy of the request's contextvars. set_actor() there mutated a
+    # throwaway copy that never reached the (separately threadpool-dispatched)
+    # sync endpoint body, so every audit row written outside the login
+    # endpoint - which sets its actor directly from the login payload, not via
+    # the contextvar - silently had no actor. A call via TestClient exercises
+    # the real threadpool dispatch, which a direct function-call test (e.g.
+    # test_audit_status.py) would not.
+    _seed_admin()
+    client = TestClient(app)
+    login_resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin1234"})
+    token = login_resp.json()["access_token"]
+
+    create_resp = client.post(
+        "/api/patents/projects",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "project_mode": "final",
+            "application_type": "Ordinary Application",
+            "docket_no": "ACTOR-PROPAGATION-1",
+            "in_application_no": "202511019999",
+            "in_application_date": "2025-11-01",
+            "applicant_name": "Acme",
+            "applicant_country": "IN",
+            "applicant_address": "Addr",
+            "applicants": [{"name": "Acme", "country": "IN", "address": "Addr"}],
+            "inventors": [{"name": "Inv A", "nationality": "IN", "address": "Inv Addr"}],
+            "priorities": [],
+            "international_applications": [],
+        },
+    )
+    assert create_resp.status_code == 200, create_resp.text
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(AuditLog).where(AuditLog.entity_type == "patent", AuditLog.action == "create")
+        ).all()
+        assert len(rows) >= 1
+        assert rows[-1].actor_username == "admin"

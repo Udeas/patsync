@@ -20,6 +20,11 @@ class WorkStatusUpdateRequest(BaseModel):
 
 class DuplicateModeRequest(BaseModel):
     duplicate_mode: str = "all"
+    excluded_entry_ids: list[int] = Field(default_factory=list)
+
+
+class DraftCreateRequest(BaseModel):
+    excluded_entry_ids: list[int] = Field(default_factory=list)
 
 
 class StepResultResponse(BaseModel):

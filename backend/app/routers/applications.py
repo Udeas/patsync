@@ -4,15 +4,24 @@ from typing import List
 from ..database import get_session
 from ..schemas.applications import (
     ApplicationCreate,
+    CustomEventClose,
+    CustomEventCreate,
+    CustomEventRead,
     ProjectDetailRead,
     ProjectDetailUpdate,
+    ProjectNoteInput,
+    ProjectNoteRead,
     ApplicationRead,
     ApplicationUpdate,
     ApplicationStatusUpdate,
     ApplicationTimelineRead,
 )
 from ..services.application_service import (
+    add_custom_event,
+    add_project_note,
+    close_custom_event,
     create_application,
+    delete_custom_event,
     get_applications,
     get_application_by_id,
     get_application_timeline,
@@ -20,6 +29,7 @@ from ..services.application_service import (
     update_application,
     update_application_status,
     update_project_detail,
+    update_project_note,
     delete_application,
 )
 
@@ -116,3 +126,71 @@ def delete_application_endpoint(application_id: int, session: Session = Depends(
     if not deleted:
         raise HTTPException(status_code=404, detail="Application not found")
     return {"message": "Application deleted"}
+
+
+@router.post("/{application_id}/notes", response_model=List[ProjectNoteRead])
+def add_project_note_endpoint(
+    application_id: int, payload: ProjectNoteInput, session: Session = Depends(get_session)
+):
+    try:
+        notes = add_project_note(session, application_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if notes is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return notes
+
+
+@router.put("/{application_id}/notes/{note_id}", response_model=List[ProjectNoteRead])
+def update_project_note_endpoint(
+    application_id: int,
+    note_id: int,
+    payload: ProjectNoteInput,
+    session: Session = Depends(get_session),
+):
+    try:
+        notes = update_project_note(session, application_id, note_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if notes is None:
+        raise HTTPException(status_code=404, detail="Project note not found")
+    return notes
+
+
+@router.post("/{application_id}/custom-events", response_model=List[CustomEventRead])
+def add_custom_event_endpoint(
+    application_id: int, payload: CustomEventCreate, session: Session = Depends(get_session)
+):
+    events = add_custom_event(session, application_id, payload)
+    if events is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return events
+
+
+@router.put("/{application_id}/custom-events/{event_id}/close", response_model=List[CustomEventRead])
+def close_custom_event_endpoint(
+    application_id: int,
+    event_id: int,
+    payload: CustomEventClose,
+    session: Session = Depends(get_session),
+):
+    try:
+        events = close_custom_event(session, application_id, event_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if events is None:
+        raise HTTPException(status_code=404, detail="Custom event not found")
+    return events
+
+
+@router.delete("/{application_id}/custom-events/{event_id}", response_model=List[CustomEventRead])
+def delete_custom_event_endpoint(
+    application_id: int, event_id: int, session: Session = Depends(get_session)
+):
+    try:
+        events = delete_custom_event(session, application_id, event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if events is None:
+        raise HTTPException(status_code=404, detail="Custom event not found")
+    return events

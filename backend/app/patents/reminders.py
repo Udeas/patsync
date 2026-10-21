@@ -58,6 +58,7 @@ def compute_next_patent_action(
     grant_date: date | None = None,
     annuity_paid_years: Sequence[int] = (),
     is_annuity_transferred: bool = False,
+    has_written_submission_followup: bool = False,
 ) -> NextPatentAction | None:
     if current_status_id == STATUS_ID_GRANTED:
         # Granted is otherwise terminal (no further action) - but once
@@ -78,6 +79,13 @@ def compute_next_patent_action(
         return None
 
     if current_status_id == STATUS_ID_HEARING:
+        # Once the daily overdue-hearing sweep has generated a Written
+        # Submission follow-up item for this hearing, the hearing itself is
+        # resolved for good - stop showing it as still "due", whether that
+        # follow-up item is still open or has since been closed (closing it
+        # must not make the due-action bounce back to the resolved hearing).
+        if has_written_submission_followup:
+            return None
         hearing_date = filled.get(STATUS_ID_HEARING)
         if hearing_date:
             return NextPatentAction(message="Hearing", due_date=hearing_date)

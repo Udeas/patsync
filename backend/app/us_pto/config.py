@@ -24,6 +24,18 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+# Both the Calendar and Gmail authorize URLs (calendar.py / gmail.py) pass
+# include_granted_scopes="true", so once a user has granted one of these
+# scopes for this OAuth client, Google includes it in the token response
+# for the other flow too - even though that flow's Flow object only ever
+# requested a single scope. oauthlib then sees the requested scope differ
+# from the scope Google actually returned and raises "Scope has changed
+# from ... to ...", surfaced to the user as "<Provider> authorization
+# failed". This is expected incremental-authorization behavior, not a
+# real error - each provider's token is still stored independently
+# (see token_store.py), so relaxing oauthlib's check is safe here.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
 CRED_DIR = os.environ.get("US_PTO_CRED_DIR", os.path.join(_STEM_V2_ROOT, "cred"))
 DOC_CODES_CONFIG = os.environ.get(
     "US_PTO_DOC_CODES_PATH",

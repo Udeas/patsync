@@ -326,6 +326,38 @@ def _run_postgres_migrations(conn) -> None:
         conn.execute(text('TRUNCATE TABLE "application" RESTART IDENTITY CASCADE'))
 
     _run_postgres_tm_migrations(conn)
+    _run_postgres_design_migrations(conn)
+
+
+def _run_postgres_design_migrations(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS design_project_note (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES application_data(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS design_custom_event (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES application_data(id),
+                event_type VARCHAR NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option VARCHAR NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+    )
 
 
 def _run_postgres_tm_migrations(conn) -> None:
@@ -630,6 +662,7 @@ def _run_sqlite_migrations(conn) -> None:
         conn.execute(text("DELETE FROM application"))
 
     _run_sqlite_tm_migrations(conn)
+    _run_sqlite_design_migrations(conn)
 
 
 def _run_sqlite_tm_migrations(conn) -> None:
@@ -715,6 +748,37 @@ def _run_sqlite_tm_migrations(conn) -> None:
             CREATE TABLE IF NOT EXISTS tm_custom_event (
                 id INTEGER PRIMARY KEY,
                 application_id INTEGER NOT NULL REFERENCES tm_application_data(id),
+                event_type TEXT NOT NULL,
+                event_date DATE NOT NULL,
+                reminder_option TEXT NOT NULL,
+                reminder_date DATE,
+                closure_date DATE,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+
+
+def _run_sqlite_design_migrations(conn) -> None:
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS design_project_note (
+                id INTEGER PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES application_data(id),
+                note_text TEXT NOT NULL,
+                created_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS design_custom_event (
+                id INTEGER PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES application_data(id),
                 event_type TEXT NOT NULL,
                 event_date DATE NOT NULL,
                 reminder_option TEXT NOT NULL,
@@ -1167,6 +1231,12 @@ def _run_uspto_tracker_migration(conn, backend: str) -> None:
                 "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS comment TEXT NOT NULL DEFAULT ''"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE uspto_tracker ADD COLUMN IF NOT EXISTS calendar_status "
+                "VARCHAR(64) NOT NULL DEFAULT ''"
+            )
+        )
     else:
         cols = conn.execute(text("PRAGMA table_info(uspto_tracker)")).fetchall()
         col_names = {row[1] for row in cols} if cols else set()
@@ -1175,6 +1245,10 @@ def _run_uspto_tracker_migration(conn, backend: str) -> None:
         if "comment" not in col_names:
             conn.execute(
                 text("ALTER TABLE uspto_tracker ADD COLUMN comment TEXT NOT NULL DEFAULT ''")
+            )
+        if "calendar_status" not in col_names:
+            conn.execute(
+                text("ALTER TABLE uspto_tracker ADD COLUMN calendar_status TEXT NOT NULL DEFAULT ''")
             )
 
 
@@ -1217,6 +1291,74 @@ def _run_doc_code_rules_migration(conn, backend: str) -> None:
         text(
             "CREATE INDEX IF NOT EXISTS ix_doc_code_rules_doc_code ON doc_code_rules (doc_code)"
         )
+    )
+
+
+def _run_google_oauth_token_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS google_oauth_token (
+                    id SERIAL PRIMARY KEY,
+                    provider VARCHAR(32) NOT NULL,
+                    token_json TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_google_oauth_token_provider UNIQUE (provider)
+                );
+                """
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS google_oauth_token (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    token_json TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE (provider)
+                );
+                """
+            )
+        )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_google_oauth_token_provider ON google_oauth_token (provider)")
+    )
+
+
+def _run_oauth_pkce_verifier_migration(conn, backend: str) -> None:
+    if backend == "postgresql":
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS oauth_pkce_verifier (
+                    id SERIAL PRIMARY KEY,
+                    state VARCHAR(128) NOT NULL,
+                    code_verifier VARCHAR(256) NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_oauth_pkce_verifier_state UNIQUE (state)
+                );
+                """
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS oauth_pkce_verifier (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    state TEXT NOT NULL,
+                    code_verifier TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE (state)
+                );
+                """
+            )
+        )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_oauth_pkce_verifier_state ON oauth_pkce_verifier (state)")
     )
 
 
@@ -1324,6 +1466,8 @@ def run_schema_migrations():
         _run_patent_metadata_migrations(conn, backend)
         _run_uspto_tracker_migration(conn, backend)
         _run_doc_code_rules_migration(conn, backend)
+        _run_google_oauth_token_migration(conn, backend)
+        _run_oauth_pkce_verifier_migration(conn, backend)
         _run_users_migration(conn, backend)
         _run_audit_migration(conn, backend)
         _seed_patent_statuses(conn, backend)

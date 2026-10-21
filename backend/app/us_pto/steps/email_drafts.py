@@ -10,7 +10,12 @@ from email.message import EmailMessage
 from app.us_pto.auth.gmail import get_gmail_service
 from app.us_pto.doc_codes import get_email_template_for_code
 from app.us_pto.email_templates import DOC_CODE_TEMPLATES
-from app.us_pto.repository import init_db, list_draft_candidates, update_entry
+from app.us_pto.repository import (
+    SKIPPED_TEMPLATE_STATUS,
+    init_db,
+    list_draft_candidates,
+    update_entry,
+)
 
 
 def _template_for_entry(entry: dict) -> dict | None:
@@ -184,20 +189,26 @@ def get_draft_candidates_for_ui() -> dict:
     }
 
 
-def create_drafts_for_ui(job=None) -> dict:
+def create_drafts_for_ui(job=None, *, excluded_entry_ids: set[int] | None = None) -> dict:
     init_db()
+    excluded_entry_ids = excluded_entry_ids or set()
     candidates = list_draft_candidates()
+    included = [c for c in candidates if c["id"] not in excluded_entry_ids]
+    skipped = [c for c in candidates if c["id"] in excluded_entry_ids]
+    for entry in skipped:
+        update_entry(entry["id"], template_status=SKIPPED_TEMPLATE_STATUS)
+
     if job is not None:
         from app.us_pto.jobs import update_job_progress
 
         update_job_progress(
             job,
             0.0,
-            f"Authorizing Gmail — {len(candidates)} row(s) to process…",
+            f"Authorizing Gmail — {len(included)} row(s) to process…",
         )
     service = get_gmail_service()
     created_count, done_count, not_required_count = process_entries(
-        candidates, service, job=job
+        included, service, job=job
     )
     return {
         "status": "success",
@@ -205,4 +216,5 @@ def create_drafts_for_ui(job=None) -> dict:
         "created_count": created_count,
         "done_count": done_count,
         "not_required_count": not_required_count,
+        "skipped_count": len(skipped),
     }
