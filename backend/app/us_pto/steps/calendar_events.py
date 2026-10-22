@@ -125,23 +125,59 @@ def create_events_for_candidates(
         print(f"Creating events for entry {entry_id} ({index}/{total})")
         created_ids = []
         created_labels = []
+        rule_errors = []
         bracket_label = candidate.get("rule_source") != "doc_code_rule"
 
-        try:
-            for months, label, due_months in candidate["rules"]:
+        for months, label, due_months in candidate["rules"]:
+            try:
                 event_body = build_event(
                     candidate["row_data"], months, label, due_months, bracket_label=bracket_label
                 )
                 result = service.events().insert(calendarId=CALENDAR_ID, body=event_body).execute()
-                created_ids.append(result["id"])
-                created_labels.append(label)
+            except Exception as exc:
+                rule_errors.append(f"{label}: {exc}")
+                continue
 
-            event_ids_value = " | ".join(created_ids)
-            update_entry(
-                entry_id,
-                calendar_event_ids=event_ids_value,
-                calendar_status="Event Created with " + ", ".join(created_labels),
-            )
+            created_ids.append(result["id"])
+            created_labels.append(label)
+            # Persist after every successful insert, not just once at the end
+            # of the whole candidate - this is what the row's "pending" check
+            # (calendar_event_ids empty) reads. Writing it immediately means a
+            # later rule's failure can never leave an already-created Calendar
+            # event unrecorded in the DB, which previously caused the row to
+            # keep showing as pending and get all of its events re-created
+            # (duplicated) on the next run.
+            try:
+                update_entry(
+                    entry_id,
+                    calendar_event_ids=" | ".join(created_ids),
+                    calendar_status="Event Created with " + ", ".join(created_labels),
+                )
+            except Exception as exc:
+                print(
+                    f"Warning: created '{label}' on Calendar for entry {entry_id} "
+                    f"but failed to persist it: {exc}"
+                )
+
+        if rule_errors and created_ids:
+            # Partial success: fold the failure reasons into the status so
+            # it's visible, without wiping the event IDs that did succeed.
+            try:
+                update_entry(
+                    entry_id,
+                    calendar_event_ids=" | ".join(created_ids),
+                    calendar_status=(
+                        "Event Created with "
+                        + ", ".join(created_labels)
+                        + " (failed: "
+                        + "; ".join(rule_errors)
+                        + ")"
+                    ),
+                )
+            except Exception as exc:
+                print(f"Warning: failed to persist final status for entry {entry_id}: {exc}")
+
+        if created_ids:
             created_rows.append({
                 "entry_id": entry_id,
                 "docket_no": candidate["row_data"]["Docket No."],
@@ -150,15 +186,16 @@ def create_events_for_candidates(
                 "particulars": candidate["row_data"]["Particulars"],
                 "event_date": candidate["row_data"]["Event Date"],
                 "reminders": ", ".join(created_labels),
-                "calendar_event_ids": event_ids_value,
+                "calendar_event_ids": " | ".join(created_ids),
                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             })
-        except Exception as exc:
+
+        if rule_errors:
             failed_rows.append({
                 "entry_id": entry_id,
                 "docket_no": candidate["row_data"]["Docket No."],
                 "doc_code": candidate["row_data"]["Doc Code"],
-                "error": str(exc),
+                "error": "; ".join(rule_errors),
             })
 
     return created_rows, failed_rows
