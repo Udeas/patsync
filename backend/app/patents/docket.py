@@ -245,7 +245,7 @@ def plan_form27_next_entry(
 
 WRITTEN_SUBMISSION_ITEM_PREFIX = "written_submission_"
 WRITTEN_SUBMISSION_FOLLOWUP_DAYS = 15
-WRITTEN_SUBMISSION_TITLE = "Written Submission"
+WRITTEN_SUBMISSION_TITLE = "Written Submission upon hearing"
 
 
 def written_submission_item_type(hearing_status_event_id: int) -> str:
@@ -260,7 +260,7 @@ def plan_written_submission_entry(
     return DocketEntryPlan(
         item_type=written_submission_item_type(hearing_status_event_id),
         title=WRITTEN_SUBMISSION_TITLE,
-        rule_reference="Post-hearing follow-up (internal target)",
+        rule_reference="Post-hearing submission U/R 14",
         due_date=hearing_date + timedelta(days=WRITTEN_SUBMISSION_FOLLOWUP_DAYS),
-        is_internal_target=True,
+        is_internal_target=False,
     )
